@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint, type-check and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # Must satisfy the homeassistant version pinned by
+          # pytest-homeassistant-custom-component in requirements_test.txt.
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements_test.txt
+      - name: Install test dependencies
+        run: pip install -r requirements_test.txt
+      - name: ruff check
+        run: ruff check --output-format=github .
+      - name: ruff format
+        run: ruff format --check .
+      - name: mypy (strict)
+        run: mypy custom_components
+      - name: pytest
+        run: >-
+          pytest
+          --cov=custom_components.notification_api
+          --cov-report=term-missing
+          --cov-fail-under=90
+
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The ref HA's developer docs recommend for custom integrations.
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # brands: no icon in home-assistant/brands yet. images: README screenshots
+          # only matter for the default HACS store. The repo's GitHub description and
+          # topics are checked too, so set them after the first push.
+          ignore: brands images
