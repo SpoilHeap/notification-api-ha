@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Notify entities, one per contact and group, named after the recipient and with
+  `handle` and `type` attributes. Entity ids come from the handle, so a contact
+  and a group with the same name don't collide:
+  `notify.notification_api_contact_alice`, `notify.notification_api_group_family`.
+  `notify.send_message` sends at normal priority, with an optional title.
+- The entities follow the recipients list: new ones appear within 30 seconds (or
+  immediately on `recipients.changed`), renames update the name, and deleted
+  recipients lose their entity and its registry entry, including ones deleted
+  while Home Assistant was off. While the list can't be loaded the entities are
+  unavailable, not removed.
+- `notification_api.send` action: `to` (handles and/or notify entity ids),
+  `message`, `title`, `priority`, `channels`, `tag` and `idempotency_key`. It
+  returns the add-on's `notification_id` and `deliveries` as response data.
+- Each notification's `source` is the calling automation or script, or the
+  action's name when called from elsewhere.
+- Errors with their own messages: rejected request (with the add-on's field
+  errors), no channel to deliver on, add-on unreachable, and add-on too old to
+  send. A rejected token starts re-authentication.
+
+### Compatibility
+
+- Sending needs an add-on version with the delivery feature (after 0.3.0). With
+  0.2.0 and 0.3.0 every send fails with "the add-on doesn't support sending
+  yet". Add-on 0.2.0 has no recipients list, so no notify entities either.
+
 ## [0.2.0] - 2026-11-27
 
 ### Added
