@@ -1,7 +1,7 @@
 # Tooling config only. The integration itself is installed by HACS, not pip.
 [project]
 name = "notification-api-ha"
-version = "0.1.0"
+version = "0.2.0"
 description = "Home Assistant custom integration for the Notification API add-on"
 readme = "README.md"
 requires-python = ">=3.14"
