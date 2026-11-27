@@ -62,6 +62,11 @@ accepts calls from the local network.
 
 - Home Assistant OS or Supervised, **2026.10** or newer.
 - The Notification API add-on, installed and running.
+- Home Assistant serving **plain HTTP** on its own port. The add-on calls the webhook at
+  `http://homeassistant:<port>`. If Home Assistant itself has `ssl_certificate` set, the
+  certificate won't match the `homeassistant` hostname, so events can't be delivered. That setup is
+  not supported in this version. HTTPS through Nabu Casa or a reverse proxy in front of Home
+  Assistant is fine.
 
 ## Installation
 
