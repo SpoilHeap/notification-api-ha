@@ -1,0 +1,115 @@
+# Tooling config only. The integration itself is installed by HACS, not pip.
+[project]
+name = "notification-api-ha"
+version = "0.1.0"
+description = "Home Assistant custom integration for the Notification API add-on"
+readme = "README.md"
+requires-python = ">=3.14"
+
+[tool.ruff]
+target-version = "py314"
+required-version = ">=0.17"
+
+[tool.ruff.lint]
+# Close to Home Assistant core's selection, minus rules that only matter in core.
+select = [
+  "A",     # builtins shadowing
+  "ASYNC", # async pitfalls
+  "B",     # bugbear
+  "BLE",   # blind except
+  "C4",    # comprehensions
+  "D",     # docstrings
+  "E",     # pycodestyle errors
+  "F",     # pyflakes
+  "FLY",   # static joins
+  "G",     # logging format
+  "I",     # isort
+  "LOG",   # logging
+  "N",     # naming
+  "PERF",  # performance
+  "PGH",   # pygrep hooks
+  "PIE",   # misc
+  "PL",    # pylint
+  "PT",    # pytest style
+  "PTH",   # pathlib
+  "RET",   # returns
+  "RSE",   # raise
+  "RUF",   # ruff
+  "S",     # bandit
+  "SIM",   # simplify
+  "SLF",   # private member access
+  "T20",   # print
+  "TID",   # tidy imports
+  "TRY",   # tryceratops
+  "UP",    # pyupgrade
+  "W",     # pycodestyle warnings
+]
+ignore = [
+  "D202",    # no blank lines allowed after function docstring (HA style)
+  "D203",    # 1 blank line before class docstring (conflicts with D211)
+  "D213",    # multi-line summary on the second line (conflicts with D212)
+  "E501",    # line length: the formatter handles it
+  "PLR0911", # too many return statements
+  "PLR0912", # too many branches
+  "PLR0913", # too many arguments
+  "PLR2004", # magic values
+  "TRY003",  # long messages in exceptions
+  "TRY300",  # return in else
+  "TRY400",  # error vs exception logging
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+  "S101",    # assert
+  "S105",    # hardcoded test tokens
+  "SLF001",  # private access in tests
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+[tool.ruff.lint.isort]
+# Home Assistant's layout: stdlib, third party, homeassistant, then local imports.
+force-sort-within-sections = true
+combine-as-imports = true
+split-on-trailing-comma = false
+known-first-party = ["homeassistant"]
+section-order = [
+  "future",
+  "standard-library",
+  "third-party",
+  "first-party",
+  "integration",
+  "local-folder",
+]
+
+[tool.ruff.lint.isort.sections]
+integration = ["custom_components"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-self", "truthy-iterable"]
+packages = ["custom_components.notification_api"]
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+# HA re-exports public names (e.g. BinarySensorDeviceClass) without `__all__`.
+module = "homeassistant.*"
+implicit_reexport = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["custom_components/notification_api"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90

@@ -1,0 +1,4 @@
+# Pins the matching homeassistant release (2026.10.4) and its test dependencies.
+pytest-homeassistant-custom-component==0.13.375
+ruff==0.17.6
+mypy==2.4.1
