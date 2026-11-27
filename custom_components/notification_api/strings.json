@@ -1,0 +1,65 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "hassio_confirm": {
+        "title": "Notification API add-on",
+        "description": "Do you want to configure Home Assistant to connect to the Notification API provided by the add-on: {addon}?"
+      },
+      "user": {
+        "title": "Connect to the Notification API add-on",
+        "description": "Use this if the add-on was not discovered automatically. The values are shown on the add-on's Integration page.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "token": "API token"
+        },
+        "data_description": {
+          "host": "The add-on's hostname on the Supervisor network, for example local-notification-api.",
+          "port": "The add-on's API port. The default is 8080.",
+          "token": "The API token shown on the add-on's Integration page."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with the Notification API add-on",
+        "description": "The add-on at {host}:{port} rejected the stored API token. Enter the current token from the add-on's Integration page. Restarting Home Assistant while the add-on is running also re-delivers the token through discovery.",
+        "data": {
+          "token": "API token"
+        },
+        "data_description": {
+          "token": "The API token shown on the add-on's Integration page."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the add-on. Check that it is running and that the host and port are correct.",
+      "invalid_auth": "The add-on rejected the API token.",
+      "unknown": "Unexpected error. Check the Home Assistant log for details."
+    },
+    "abort": {
+      "already_configured": "The Notification API is already configured.",
+      "discovery_invalid_auth": "The add-on rejected the token it published through discovery. Restart the add-on, or set the integration up manually with the token from the add-on's Integration page.",
+      "invalid_discovery_info": "The add-on sent incomplete discovery information."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected"
+      }
+    },
+    "sensor": {
+      "version": {
+        "name": "Add-on version"
+      }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "The Notification API add-on rejected the API token."
+    },
+    "update_failed": {
+      "message": "Could not reach the Notification API add-on: {error}"
+    }
+  }
+}
