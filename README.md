@@ -42,9 +42,10 @@ actions:
       message: "{{ trigger.event.data.channel }}: {{ trigger.event.data.error }}"
 ```
 
-To check that events reach Home Assistant, open **Developer tools → Events**,
-listen to `notification_api_webhook_test`, and press **Send test event** on the
-add-on's Integration page.
+To check that events reach Home Assistant, open **Settings → Developer tools → Events**
+(`/config/developer-tools/event`; Developer tools moved into Settings in 2026), start
+listening to `notification_api_webhook_test`, and *then* press **Send test event** on the
+add-on's Integration page. The Events tool only shows events that arrive while it's listening.
 
 Events are best-effort: the add-on sends each one once and doesn't retry. Every
 call is signed with a secret shared only between the integration and the add-on,
