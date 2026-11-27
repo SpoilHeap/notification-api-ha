@@ -8,5 +8,10 @@
         "default": "mdi:account-group"
       }
     }
+  },
+  "services": {
+    "send": {
+      "service": "mdi:send"
+    }
   }
 }

@@ -1,0 +1,43 @@
+send:
+  fields:
+    to:
+      required: true
+      example: "contact:alice"
+      selector:
+        text:
+          multiple: true
+    message:
+      required: true
+      example: "Door opened while the alarm is armed"
+      selector:
+        text:
+          multiline: true
+    title:
+      example: "Front door"
+      selector:
+        text:
+    priority:
+      default: normal
+      selector:
+        select:
+          translation_key: priority
+          options:
+            - low
+            - normal
+            - high
+            - critical
+    channels:
+      selector:
+        select:
+          translation_key: channels
+          multiple: true
+          options:
+            - telegram
+            - sms
+    tag:
+      example: "front_door_alarm"
+      selector:
+        text:
+    idempotency_key:
+      selector:
+        text:

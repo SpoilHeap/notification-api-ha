@@ -7,7 +7,15 @@ from typing import Any
 
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
-from .const import PING_OK, PING_URL, RECIPIENTS_OK, RECIPIENTS_URL, WEBHOOK_URL
+from .const import (
+    NOTIFY_OK,
+    NOTIFY_URL,
+    PING_OK,
+    PING_URL,
+    RECIPIENTS_OK,
+    RECIPIENTS_URL,
+    WEBHOOK_URL,
+)
 
 
 def mock_addon(
@@ -17,11 +25,13 @@ def mock_addon(
     webhook_status: HTTPStatus = HTTPStatus.NO_CONTENT,
     recipients: dict[str, Any] | None = None,
     recipients_status: HTTPStatus = HTTPStatus.OK,
+    notify: dict[str, Any] | None = None,
     **ping_kwargs: Any,
 ) -> AiohttpClientMocker:
     """Replace every add-on endpoint mock. Defaults: a current, healthy add-on.
 
-    `ping_kwargs` (e.g. `status=`, `exc=`) override the ping response.
+    `ping_kwargs` (e.g. `status=`, `exc=`) override the ping response. `notify`
+    overrides the `POST /notify` mock (default: 202 with `NOTIFY_OK`).
     """
     aioclient_mock.clear_requests()
     aioclient_mock.get(PING_URL, **(ping_kwargs or {"json": ping or PING_OK}))
@@ -34,6 +44,9 @@ def mock_addon(
         )
     else:
         aioclient_mock.get(RECIPIENTS_URL, status=recipients_status)
+    aioclient_mock.post(
+        NOTIFY_URL, **(notify or {"status": HTTPStatus.ACCEPTED, "json": NOTIFY_OK})
+    )
     return aioclient_mock
 
 

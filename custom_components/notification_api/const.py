@@ -47,3 +47,24 @@ EVENT_TYPE_WEBHOOK_TEST: Final = "webhook.test"
 EVENT_DELIVERY_SENT: Final = f"{DOMAIN}_delivery_sent"
 EVENT_DELIVERY_FAILED: Final = f"{DOMAIN}_delivery_failed"
 EVENT_WEBHOOK_TEST: Final = f"{DOMAIN}_webhook_test"
+
+# The `notification_api.send` action (spec 4.1, 11).
+SERVICE_SEND: Final = "send"
+ATTR_TO: Final = "to"
+ATTR_MESSAGE: Final = "message"
+ATTR_TITLE: Final = "title"
+ATTR_PRIORITY: Final = "priority"
+ATTR_CHANNELS: Final = "channels"
+ATTR_TAG: Final = "tag"
+ATTR_IDEMPOTENCY_KEY: Final = "idempotency_key"
+PRIORITIES: Final = ("low", "normal", "high", "critical")
+DEFAULT_PRIORITY: Final = "normal"
+CHANNELS: Final = ("telegram", "sms")
+
+# `source` sent with a notification when the caller isn't an automation or script.
+SOURCE_SEND_ACTION: Final = f"{DOMAIN}.{SERVICE_SEND}"
+SOURCE_NOTIFY_ACTION: Final = "notify.send_message"
+
+# Notify entity state attributes, so automations can find a recipient's handle.
+ATTR_HANDLE: Final = "handle"
+ATTR_RECIPIENT_TYPE: Final = "type"
