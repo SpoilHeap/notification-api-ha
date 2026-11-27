@@ -3,7 +3,7 @@
   "name": "Notification API",
   "codeowners": ["@SpoilHeap"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["webhook"],
   "documentation": "https://github.com/SpoilHeap/notification-api-ha",
   "integration_type": "service",
   "iot_class": "local_polling",

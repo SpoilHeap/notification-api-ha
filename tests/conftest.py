@@ -11,7 +11,8 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.notification_api.const import DOMAIN
 
-from .const import ENTRY_DATA, PING_OK, PING_URL
+from .common import mock_addon
+from .const import ENTRY_DATA
 
 
 @pytest.fixture(autouse=True)
@@ -33,9 +34,8 @@ def mock_config_entry() -> MockConfigEntry:
 
 @pytest.fixture
 def mock_ping(aioclient_mock: AiohttpClientMocker) -> AiohttpClientMocker:
-    """Make the add-on answer ping with 200."""
-    aioclient_mock.get(PING_URL, json=PING_OK)
-    return aioclient_mock
+    """Make every add-on endpoint answer as a current, healthy add-on does."""
+    return mock_addon(aioclient_mock)
 
 
 @pytest.fixture

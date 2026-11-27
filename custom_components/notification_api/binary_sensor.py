@@ -11,7 +11,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import NotificationApiConfigEntry
+from .coordinator import NotificationApiConfigEntry, NotificationApiCoordinator
 from .entity import NotificationApiEntity
 
 # Coordinator-driven: entities never poll on their own.
@@ -36,7 +36,9 @@ async def async_setup_entry(
     )
 
 
-class NotificationApiConnectedSensor(NotificationApiEntity, BinarySensorEntity):
+class NotificationApiConnectedSensor(
+    NotificationApiEntity[NotificationApiCoordinator], BinarySensorEntity
+):
     """On while the last ping succeeded.
 
     Unlike the other entities this one stays available when the add-on is down,
