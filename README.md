@@ -72,3 +72,7 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org/), ver
 follow [SemVer](https://semver.org/), and user-visible changes go in
 [CHANGELOG.md](CHANGELOG.md). Releases bump `version` in
 `custom_components/notification_api/manifest.json` and are tagged `vX.Y.Z`.
+
+## Licence
+
+[MIT](LICENSE)
