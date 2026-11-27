@@ -54,4 +54,4 @@ async def test_entities(
     assert device.name == "Notification API"
     assert device.entry_type is dr.DeviceEntryType.SERVICE
     assert device.sw_version == VERSION
-    assert device.configuration_url == f"homeassistant://hassio/ingress/{SLUG}"
+    assert device.configuration_url == f"homeassistant://app/{SLUG}"
