@@ -137,6 +137,22 @@ def test_ac37_known_answer_vector() -> None:
     )
 
 
+def test_ac37_spec_vector_from_the_add_on() -> None:
+    """AC37: the add-on's published vector (spec v1.2 section 4.4) verifies here too.
+
+    Cross-repo check: the add-on's C# signer produced this value, so a mismatch
+    means the two implementations disagree on the signed bytes or the key.
+    """
+    body = (
+        b'{"id":"evt_019ac63f8e407c3a9d1b2e4f5a6b7c8d","type":"webhook.test",'
+        b'"occurred_at":"2026-11-27T16:15:20Z","data":{}}'
+    )
+    assert len(body) == 114
+    assert compute_signature(bytes(range(32)), "1795796120", body) == (
+        "sha256=c2fcb3fbbe01d66932b4d9a193e368ef70bf42739a894e6dd48b98d5d50911ff"
+    )
+
+
 async def test_ac37_known_answer_vector_accepted(
     hass: HomeAssistant, post: Post
 ) -> None:
