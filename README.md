@@ -20,7 +20,18 @@ delivery events come in later versions, once the add-on exposes those endpoints.
 - Home Assistant OS or Supervised, **2026.10** or newer.
 - The Notification API add-on, installed and running.
 
-## Installation (HACS)
+## Installation
+
+### Home Assistant 2026.11 and newer (Marketplace)
+
+HACS is built into Home Assistant as the **Marketplace**.
+
+1. Go to **Settings → Marketplace** and choose **Add from link** (top right).
+2. Enter `SpoilHeap/notification-api-ha` and choose **Add**. If asked for a **Type**, pick **Integration**.
+   Custom repositories need a GitHub connection: if prompted, choose **Continue** and enter the code on GitHub.
+3. Open **Notification API** in the list, install it, and restart Home Assistant.
+
+### Home Assistant 2026.10 (HACS)
 
 1. In HACS, open the menu → **Custom repositories**.
 2. Add `https://github.com/SpoilHeap/notification-api-ha` with type **Integration**.

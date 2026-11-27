@@ -34,7 +34,8 @@ class NotificationApiEntity(CoordinatorEntity[NotificationApiCoordinator]):
             sw_version=coordinator.data.version if coordinator.data else None,
         )
         # Known only for discovered entries: the slug includes the repository hash.
+        # homeassistant://app/<slug> opens the add-on's panel, as core does for
+        # AdGuard and deCONZ (home-assistant/core#161264). The old
+        # hassio/ingress/<slug> form falls back to the Overview page.
         if slug := entry.data.get(CONF_ADDON_SLUG):
-            self._attr_device_info["configuration_url"] = (
-                f"homeassistant://hassio/ingress/{slug}"
-            )
+            self._attr_device_info["configuration_url"] = f"homeassistant://app/{slug}"
