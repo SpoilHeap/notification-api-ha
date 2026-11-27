@@ -51,6 +51,14 @@
     "sensor": {
       "version": {
         "name": "Add-on version"
+      },
+      "recipients": {
+        "name": "Recipients",
+        "state_attributes": {
+          "handles": {
+            "name": "Handles"
+          }
+        }
       }
     }
   },
@@ -60,6 +68,12 @@
     },
     "update_failed": {
       "message": "Could not reach the Notification API add-on: {error}"
+    },
+    "recipients_unsupported": {
+      "message": "The Notification API add-on doesn't support the recipients list yet. Update the add-on."
+    },
+    "webhook_register_failed": {
+      "message": "Could not register the webhook with the Notification API add-on: {error}"
     }
   }
 }

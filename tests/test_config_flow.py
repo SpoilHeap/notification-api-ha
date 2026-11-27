@@ -21,8 +21,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 
-from custom_components.notification_api.const import CONF_ADDON_SLUG, DOMAIN
+from custom_components.notification_api.const import (
+    CONF_ADDON_SLUG,
+    CONF_WEBHOOK_SECRET,
+    DOMAIN,
+)
 
+from .common import calls, mock_addon
 from .const import (
     ENTRY_DATA,
     HOST,
@@ -33,6 +38,7 @@ from .const import (
     SLUG,
     TOKEN,
     UUID,
+    WEBHOOK_URL,
 )
 
 ADDON_NAME = "Notification API"
@@ -113,8 +119,7 @@ async def test_discovery_cannot_connect_then_retry(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "cannot_connect"}
 
-    aioclient_mock.clear_requests()
-    aioclient_mock.get(PING_URL, json=PING_OK)
+    mock_addon(aioclient_mock)
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -193,7 +198,7 @@ async def test_discovery_adopts_manual_entry(
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.ABORT
-    assert entry.data == ENTRY_DATA
+    assert entry.data.items() >= ENTRY_DATA.items()
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
 
 
@@ -227,8 +232,7 @@ async def test_discovery_fixes_entry_in_reauth(
         for f in hass.config_entries.flow.async_progress()
     )
 
-    aioclient_mock.clear_requests()
-    aioclient_mock.get(PING_URL, json=PING_OK)
+    mock_addon(aioclient_mock)
     result = await _start_discovery(hass, _discovery(token=NEW_TOKEN))
     await hass.async_block_till_done()
 
@@ -236,6 +240,9 @@ async def test_discovery_fixes_entry_in_reauth(
     assert mock_config_entry.data[CONF_TOKEN] == NEW_TOKEN
     assert mock_config_entry.state is ConfigEntryState.LOADED
     assert not hass.config_entries.flow.async_progress()
+    # The webhook is registered again, with the new token.
+    [(_, _, _, headers)] = calls(aioclient_mock, "PUT", WEBHOOK_URL)
+    assert headers["Authorization"] == f"Bearer {NEW_TOKEN}"
 
 
 # Manual setup
@@ -292,8 +299,7 @@ async def test_user_errors_then_recover(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
 
-    aioclient_mock.clear_requests()
-    aioclient_mock.get(PING_URL, json=PING_OK)
+    mock_addon(aioclient_mock)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input
     )
@@ -352,8 +358,7 @@ async def test_reauth(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
 
-    aioclient_mock.clear_requests()
-    aioclient_mock.get(PING_URL, json=PING_OK)
+    mock_addon(aioclient_mock)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_TOKEN: NEW_TOKEN}
     )
@@ -366,6 +371,10 @@ async def test_reauth(
     assert init_integration.state is ConfigEntryState.LOADED
     _, _, _, headers = aioclient_mock.mock_calls[-1]
     assert headers["Authorization"] == f"Bearer {NEW_TOKEN}"
+    # Re-registered with the new token and the same, stable secret.
+    [(_, _, body, headers)] = calls(aioclient_mock, "PUT", WEBHOOK_URL)
+    assert headers["Authorization"] == f"Bearer {NEW_TOKEN}"
+    assert body["secret"] == init_integration.data[CONF_WEBHOOK_SECRET]
 
 
 async def test_reauth_cannot_connect(

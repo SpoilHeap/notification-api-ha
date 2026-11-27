@@ -24,7 +24,7 @@ async def test_entities(
     entity_registry: er.EntityRegistry,
     device_registry: dr.DeviceRegistry,
 ) -> None:
-    """Connected and Add-on version, grouped under one service device."""
+    """Connected, Add-on version and Recipients, under one service device."""
     connected = hass.states.get("binary_sensor.notification_api_connected")
     assert connected is not None
     assert connected.state == STATE_ON
@@ -35,6 +35,12 @@ async def test_entities(
     assert version is not None
     assert version.state == VERSION
     assert version.attributes[ATTR_FRIENDLY_NAME] == "Notification API Add-on version"
+
+    recipients = hass.states.get("sensor.notification_api_recipients")
+    assert recipients is not None
+    assert recipients.state == "2"
+    assert recipients.attributes[ATTR_FRIENDLY_NAME] == "Notification API Recipients"
+    assert recipients.attributes["handles"] == ["contact:alice", "group:family"]
 
     entry_id = init_integration.entry_id
     connected_entry = entity_registry.async_get(connected.entity_id)
@@ -47,6 +53,12 @@ async def test_entities(
     assert version_entry.translation_key == "version"
     assert connected_entry.entity_category is EntityCategory.DIAGNOSTIC
     assert connected_entry.device_id == version_entry.device_id
+    recipients_entry = entity_registry.async_get(recipients.entity_id)
+    assert recipients_entry is not None
+    assert recipients_entry.unique_id == f"{entry_id}_recipients"
+    assert recipients_entry.translation_key == "recipients"
+    assert recipients_entry.entity_category is None
+    assert recipients_entry.device_id == connected_entry.device_id
 
     device = device_registry.async_get(connected_entry.device_id)
     assert device is not None

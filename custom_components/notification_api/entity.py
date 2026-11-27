@@ -7,23 +7,32 @@ from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_ADDON_SLUG, DEFAULT_NAME, DOMAIN
-from .coordinator import NotificationApiCoordinator
+from .coordinator import (
+    NotificationApiCoordinator,
+    NotificationApiRecipientsCoordinator,
+)
 
 
-class NotificationApiEntity(CoordinatorEntity[NotificationApiCoordinator]):
-    """An entity on the Notification API service device."""
+class NotificationApiEntity[
+    CoordinatorT: (NotificationApiCoordinator | NotificationApiRecipientsCoordinator)
+](CoordinatorEntity[CoordinatorT]):
+    """An entity on the Notification API service device.
+
+    Generic over the coordinator: the ping coordinator, or the recipients one.
+    """
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator: NotificationApiCoordinator,
+        coordinator: CoordinatorT,
         description: EntityDescription,
     ) -> None:
         """Initialise the entity."""
         super().__init__(coordinator)
         self.entity_description = description
         entry = coordinator.config_entry
+        ping = entry.runtime_data.coordinator
         # The config entry's unique_id is the fixed domain (single instance), so the
         # entry_id is what keeps entity and device ids distinct per entry.
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
@@ -31,7 +40,7 @@ class NotificationApiEntity(CoordinatorEntity[NotificationApiCoordinator]):
             identifiers={(DOMAIN, entry.entry_id)},
             name=DEFAULT_NAME,
             entry_type=DeviceEntryType.SERVICE,
-            sw_version=coordinator.data.version if coordinator.data else None,
+            sw_version=ping.data.version if ping.data else None,
         )
         # Known only for discovered entries: the slug includes the repository hash.
         # homeassistant://app/<slug> opens the add-on's panel, as core does for

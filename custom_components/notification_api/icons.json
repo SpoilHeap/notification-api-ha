@@ -3,6 +3,9 @@
     "sensor": {
       "version": {
         "default": "mdi:information-outline"
+      },
+      "recipients": {
+        "default": "mdi:account-group"
       }
     }
   }
