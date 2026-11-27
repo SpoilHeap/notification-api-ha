@@ -18,6 +18,7 @@ BASE_URL = f"http://{HOST}:{PORT}/api/v1"
 PING_URL = f"{BASE_URL}/ping"
 WEBHOOK_URL = f"{BASE_URL}/webhook"
 RECIPIENTS_URL = f"{BASE_URL}/recipients"
+NOTIFY_URL = f"{BASE_URL}/notify"
 
 PING_OK = {"ok": True, "version": VERSION, "instance_id": INSTANCE_ID}
 # The released add-on v0.2.0: no instance_id, no /webhook, no /recipients.
@@ -29,6 +30,19 @@ RECIPIENTS = [
     {"handle": "group:family", "name": "Family", "type": "group"},
 ]
 RECIPIENTS_OK = {"revision": REVISION, "recipients": RECIPIENTS}
+
+NOTIFY_OK = {
+    "notification_id": "ntf_01",
+    "deliveries": [
+        {
+            "delivery_id": "dlv_1",
+            "contact": "alice",
+            "via": "contact:alice",
+            "channel": "telegram",
+            "status": "queued",
+        }
+    ],
+}
 
 ENTRY_DATA = {
     CONF_HOST: HOST,
