@@ -5,15 +5,58 @@ Telegram and SMS notifications to named contacts and groups. Home Assistant says
 *who* (`contact:alice`, `group:family`), *what* and *how urgent*; the add-on decides
 how to deliver it.
 
-This first version (0.1.0) connects to the add-on and reports its status:
+The integration connects to the add-on, reports its status, lists its recipients
+and turns the add-on's delivery events into Home Assistant events:
 
 | Entity | Description |
 |---|---|
 | `binary_sensor.notification_api_connected` | On while the add-on answers with a valid token. Stays available, so it reads *Disconnected* when the add-on is down. |
 | `sensor.notification_api_add_on_version` | The add-on version. Unavailable while the add-on can't be reached. |
+| `sensor.notification_api_recipients` | How many contacts and groups the add-on has. The `handles` attribute lists them (`contact:alice`, `group:family`, ...). Refreshed every 30 seconds, and immediately when the add-on reports a change. |
 
-Sending (`notify.<handle>` entities and the `notification_api.send` action) and
-delivery events come in later versions, once the add-on exposes those endpoints.
+Sending (`notify.<handle>` entities and the `notification_api.send` action) comes
+in a later version.
+
+## Events
+
+The integration registers a webhook with the add-on when it is set up, and fires
+these events on the Home Assistant event bus. Each event's data is the add-on's
+event data plus `event_id` (unique per event) and `occurred_at` (ISO 8601, UTC).
+
+| Event | When | Data |
+|---|---|---|
+| `notification_api_delivery_sent` | A delivery reached `sent`. | `notification_id`, `delivery_id`, `contact`, `via`, `channel`, `tag`, `source` |
+| `notification_api_delivery_failed` | A delivery failed after all retries. | The same, plus `error` |
+| `notification_api_webhook_test` | You pressed **Send test event** on the add-on's **Integration** page. | Only `event_id` and `occurred_at` |
+
+To react to failed deliveries:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: notification_api_delivery_failed
+actions:
+  - action: persistent_notification.create
+    data:
+      title: "Notification to {{ trigger.event.data.contact }} failed"
+      message: "{{ trigger.event.data.channel }}: {{ trigger.event.data.error }}"
+```
+
+To check that events reach Home Assistant, open **Developer tools → Events**,
+listen to `notification_api_webhook_test`, and press **Send test event** on the
+add-on's Integration page.
+
+Events are best-effort: the add-on sends each one once and doesn't retry. Every
+call is signed with a secret shared only between the integration and the add-on,
+calls older than five minutes or repeated are ignored, and the webhook only
+accepts calls from the local network.
+
+## Compatibility
+
+| Add-on version | What works |
+|---|---|
+| 0.2.0 | Connected and Add-on version. The add-on has no webhook or recipients endpoints yet, so no events are fired and the Recipients sensor is unavailable. A warning is logged once. |
+| Newer | Everything above. When the add-on is updated from 0.2.0, the integration notices the new version, reloads, and registers its webhook. |
 
 ## Requirements
 
@@ -47,7 +90,9 @@ Select **Add** and confirm. The host, port and API token come from the add-on;
 there is nothing to type.
 
 If the add-on rotates its token, or is reinstalled, it re-announces itself and the
-existing entry is updated in place.
+existing entry is updated in place. The integration then registers its webhook
+again with the new token. A reinstalled add-on (a fresh database, detected by its
+instance id) gets the webhook registered again too.
 
 ### Manual
 
@@ -60,6 +105,11 @@ token shown on the add-on's **Integration** page.
 If the add-on rejects the stored token, Home Assistant asks you to re-authenticate.
 Enter the current token from the add-on's Integration page, or restart Home
 Assistant while the add-on is running so discovery delivers it again.
+
+### Removal
+
+Deleting the integration also removes its webhook from the add-on. If the add-on
+is stopped at the time, the integration is still removed.
 
 ## Development
 
