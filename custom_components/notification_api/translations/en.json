@@ -48,6 +48,18 @@
         "name": "Connected"
       }
     },
+    "notify": {
+      "recipient": {
+        "state_attributes": {
+          "handle": {
+            "name": "Handle"
+          },
+          "type": {
+            "name": "Type"
+          }
+        }
+      }
+    },
     "sensor": {
       "version": {
         "name": "Add-on version"
@@ -74,6 +86,79 @@
     },
     "webhook_register_failed": {
       "message": "Could not register the webhook with the Notification API add-on: {error}"
+    },
+    "not_loaded": {
+      "message": "The Notification API integration isn't loaded. Check that it is set up and that the add-on is running."
+    },
+    "unknown_entity": {
+      "message": "{entity_id} is not a notify entity of the Notification API integration."
+    },
+    "send_invalid": {
+      "message": "The Notification API add-on rejected the notification: {errors}"
+    },
+    "send_no_deliveries": {
+      "message": "No recipient has a channel to deliver on. Check the recipients' verified channels and routing in the add-on, or the channels override."
+    },
+    "send_unsupported": {
+      "message": "The Notification API add-on doesn't support sending yet. Update the add-on."
+    },
+    "addon_unreachable": {
+      "message": "The Notification API add-on is unreachable: {error}"
+    },
+    "send_failed": {
+      "message": "The Notification API add-on couldn't send the notification: {error}"
+    }
+  },
+  "selector": {
+    "priority": {
+      "options": {
+        "low": "Low",
+        "normal": "Normal",
+        "high": "High",
+        "critical": "Critical"
+      }
+    },
+    "channels": {
+      "options": {
+        "telegram": "Telegram",
+        "sms": "SMS"
+      }
+    }
+  },
+  "services": {
+    "send": {
+      "name": "Send notification",
+      "description": "Sends a notification to contacts and groups through the Notification API add-on. The add-on picks the channels from each contact's routing for the priority.",
+      "fields": {
+        "to": {
+          "name": "To",
+          "description": "Recipient handles, such as contact:alice or group:family, or notify entities of this integration, such as notify.notification_api_contact_alice."
+        },
+        "message": {
+          "name": "Message",
+          "description": "The message text."
+        },
+        "title": {
+          "name": "Title",
+          "description": "An optional title. Telegram shows it in bold, SMS puts it before the message."
+        },
+        "priority": {
+          "name": "Priority",
+          "description": "How urgent the notification is. The add-on maps it to channels for each contact."
+        },
+        "channels": {
+          "name": "Channels",
+          "description": "Override the add-on's channel choice. Leave empty to use each contact's routing."
+        },
+        "tag": {
+          "name": "Tag",
+          "description": "An optional label, logged by the add-on and included in delivery events."
+        },
+        "idempotency_key": {
+          "name": "Idempotency key",
+          "description": "Sending the same key again within 24 hours returns the original response and sends nothing new."
+        }
+      }
     }
   }
 }

@@ -1,15 +1,15 @@
 """Async client for the Notification API add-on (spec section 4).
 
-Covers `/ping`, `/recipients` and `/webhook`. `/notify` and `/notifications/{id}`
-will be added here as `async_*` methods; they all go through `_request`, which owns
+Covers `/ping`, `/recipients`, `/webhook` and `/notify`. `/notifications/{id}` will
+be added here as an `async_*` method; they all go through `_request`, which owns
 auth, timeouts and error mapping.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Any
 
@@ -36,7 +36,45 @@ class NotificationApiNotFoundError(NotificationApiError):
     """The endpoint or resource does not exist (HTTP 404).
 
     For `/webhook` and `/recipients` this means the add-on predates them (v0.2.0).
+    For `/notify` it means the add-on predates sending (v0.3.0 and older).
     """
+
+
+@dataclass(frozen=True, slots=True)
+class ProblemDetails:
+    """The parts of an RFC 9457 `ProblemDetails` body that the integration uses."""
+
+    title: str | None = None
+    detail: str | None = None
+    # Field errors of a 400, keyed by the request's (snake_case) JSON field name.
+    errors: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def describe(self) -> str:
+        """Return a one-line summary: the field errors, else the detail or title."""
+        if self.errors:
+            return "; ".join(
+                f"{name}: {' '.join(messages)}" if messages else name
+                for name, messages in self.errors.items()
+            )
+        return self.detail or self.title or "no details"
+
+
+class NotificationApiProblemError(NotificationApiError):
+    """The add-on refused the request with a `ProblemDetails` body (4xx)."""
+
+    def __init__(self, status: HTTPStatus, problem: ProblemDetails) -> None:
+        """Keep the status and the parsed problem."""
+        super().__init__(f"HTTP {status}: {problem.describe()}")
+        self.status = status
+        self.problem = problem
+
+
+class NotificationApiValidationError(NotificationApiProblemError):
+    """HTTP 400: invalid payload or unknown handles (AC09, AC10, AC36)."""
+
+
+class NotificationApiNoDeliveriesError(NotificationApiProblemError):
+    """HTTP 422 from `/notify`: no recipient has a channel to deliver on (AC08)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,9 +113,44 @@ class WebhookRegistration:
 
 
 @dataclass(frozen=True, slots=True)
+class Delivery:
+    """One queued delivery of a notification (spec 4.1)."""
+
+    delivery_id: str
+    contact: str
+    via: str
+    channel: str
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class NotifyResult:
+    """Response of `POST /api/v1/notify` (202 Accepted)."""
+
+    notification_id: str
+    deliveries: tuple[Delivery, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the response as the add-on sent it (snake_case), JSON-ready."""
+        return {
+            "notification_id": self.notification_id,
+            "deliveries": [
+                {
+                    "delivery_id": d.delivery_id,
+                    "contact": d.contact,
+                    "via": d.via,
+                    "channel": d.channel,
+                    "status": d.status,
+                }
+                for d in self.deliveries
+            ],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class _Response:
     status: HTTPStatus
-    # The decoded JSON object for a 200, empty for bodiless statuses (204, 304).
+    # The decoded JSON object, empty for bodiless statuses (204, 304).
     body: dict[str, Any]
 
 
@@ -168,6 +241,63 @@ class NotificationApiClient:
         """Remove the webhook registration. Idempotent on the add-on side."""
         await self._request("DELETE", "/webhook", expected=(HTTPStatus.NO_CONTENT,))
 
+    async def async_notify(
+        self,
+        to: Sequence[str],
+        message: str,
+        *,
+        title: str | None = None,
+        priority: str = "normal",
+        channels: Sequence[str] | None = None,
+        tag: str | None = None,
+        source: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> NotifyResult:
+        """Send a notification (spec 4.1). Optional fields left as None are omitted.
+
+        Raises `NotificationApiValidationError` (400), `NotificationApiNoDeliveriesError`
+        (422) and `NotificationApiNotFoundError` (404: the add-on predates sending).
+        """
+        payload: dict[str, Any] = {
+            "to": list(to),
+            "message": message,
+            "priority": priority,
+        }
+        optional: dict[str, Any] = {
+            "title": title,
+            "channels": list(channels) if channels else None,
+            "tag": tag,
+            "source": source,
+            "idempotency_key": idempotency_key,
+        }
+        payload.update({k: v for k, v in optional.items() if v is not None})
+        # 202 for a new notification. A repeated idempotency key returns "the
+        # original response" (AC12); 200 is accepted too, in case that is its status.
+        body = (
+            await self._request(
+                "POST",
+                "/notify",
+                json=payload,
+                expected=(HTTPStatus.ACCEPTED, HTTPStatus.OK),
+            )
+        ).body
+        try:
+            return NotifyResult(
+                notification_id=str(body["notification_id"]),
+                deliveries=tuple(
+                    Delivery(
+                        delivery_id=str(item["delivery_id"]),
+                        contact=str(item["contact"]),
+                        via=str(item["via"]),
+                        channel=str(item["channel"]),
+                        status=str(item["status"]),
+                    )
+                    for item in body["deliveries"]
+                ),
+            )
+        except (KeyError, TypeError) as err:
+            raise NotificationApiError(f"Unexpected notify response: {body!r}") from err
+
     async def _request(
         self,
         method: str,
@@ -177,7 +307,7 @@ class NotificationApiClient:
         headers: Mapping[str, str] | None = None,
         expected: tuple[HTTPStatus, ...] = (HTTPStatus.OK,),
     ) -> _Response:
-        """Send a request. A 200 body is decoded and must be a JSON object."""
+        """Send a request. A response body is decoded and must be a JSON object."""
         url = f"{self._base_url}{path}"
         request_headers = {"Authorization": f"Bearer {self._token}", **(headers or {})}
         body: Any = {}
@@ -197,11 +327,15 @@ class NotificationApiClient:
                         raise NotificationApiNotFoundError(
                             f"{method} {path} returned HTTP 404"
                         )
+                    if status in _PROBLEM_ERRORS:
+                        raise _PROBLEM_ERRORS[status](
+                            HTTPStatus(status), await _read_problem(response)
+                        )
                     if status not in expected:
                         raise NotificationApiError(
                             f"Unexpected HTTP {status} from {method} {path}"
                         )
-                    if status == HTTPStatus.OK:
+                    if status not in (HTTPStatus.NO_CONTENT, HTTPStatus.NOT_MODIFIED):
                         body = await response.json()
         except TimeoutError as err:
             raise NotificationApiConnectionError(
@@ -216,3 +350,35 @@ class NotificationApiClient:
         if not isinstance(body, dict):
             raise NotificationApiError(f"Unexpected response from {path}: {body!r}")
         return _Response(status=HTTPStatus(status), body=body)
+
+
+_PROBLEM_ERRORS: dict[int, type[NotificationApiProblemError]] = {
+    HTTPStatus.BAD_REQUEST: NotificationApiValidationError,
+    HTTPStatus.UNPROCESSABLE_ENTITY: NotificationApiNoDeliveriesError,
+}
+
+
+async def _read_problem(response: aiohttp.ClientResponse) -> ProblemDetails:
+    """Parse a `ProblemDetails` body, tolerating a missing or malformed one."""
+    try:
+        # `application/problem+json`, which aiohttp's default check refuses.
+        body = await response.json(content_type=None)
+    except ValueError:
+        return ProblemDetails()
+    if not isinstance(body, dict):
+        return ProblemDetails()
+    errors: dict[str, tuple[str, ...]] = {}
+    raw_errors = body.get("errors")
+    if isinstance(raw_errors, dict):
+        for name, messages in raw_errors.items():
+            if isinstance(messages, list):
+                errors[str(name)] = tuple(str(m) for m in messages)
+            else:
+                errors[str(name)] = (str(messages),)
+    title = body.get("title")
+    detail = body.get("detail")
+    return ProblemDetails(
+        title=title if isinstance(title, str) else None,
+        detail=detail if isinstance(detail, str) else None,
+        errors=errors,
+    )

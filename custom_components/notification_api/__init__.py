@@ -10,7 +10,9 @@ from homeassistant.components import webhook
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.util.hass_dict import HassKey
 
 from .api import (
@@ -28,8 +30,11 @@ from .coordinator import (
     NotificationApiRecipientsCoordinator,
 )
 from .receiver import NotificationApiWebhookHandler, build_webhook_url, generate_secret
+from .services import async_setup_services
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.NOTIFY, Platform.SENSOR]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # Set once the "add-on doesn't support webhooks" warning was logged in this run.
 _WARNED_WEBHOOK_UNSUPPORTED: HassKey[bool] = HassKey(f"{DOMAIN}_webhook_unsupported")
@@ -44,6 +49,12 @@ def _client(
         entry.data[CONF_PORT],
         entry.data[CONF_TOKEN],
     )
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the `notification_api.send` action, whether or not an entry loads."""
+    async_setup_services(hass)
+    return True
 
 
 async def async_setup_entry(
@@ -71,7 +82,7 @@ async def async_setup_entry(
     )
 
     # Never fails setup: on add-on v0.2.0 (404) the Recipients sensor is
-    # unavailable, and polling keeps retrying.
+    # unavailable, there are no notify entities, and polling keeps retrying.
     await recipients.async_refresh()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

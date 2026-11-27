@@ -12,12 +12,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from custom_components.notification_api.api import (
+    Delivery,
     NotificationApiAuthError,
     NotificationApiClient,
     NotificationApiConnectionError,
     NotificationApiError,
+    NotificationApiNoDeliveriesError,
     NotificationApiNotFoundError,
+    NotificationApiValidationError,
+    NotifyResult,
     PingResult,
+    ProblemDetails,
     Recipient,
     RecipientsResult,
     WebhookRegistration,
@@ -26,6 +31,8 @@ from custom_components.notification_api.api import (
 from .const import (
     HOST,
     INSTANCE_ID,
+    NOTIFY_OK,
+    NOTIFY_URL,
     PING_OK,
     PING_URL,
     PING_V020,
@@ -185,7 +192,7 @@ async def test_ac35_put_webhook(
     ("status", "expected"),
     [
         (HTTPStatus.NOT_FOUND, NotificationApiNotFoundError),
-        (HTTPStatus.BAD_REQUEST, NotificationApiError),
+        (HTTPStatus.BAD_REQUEST, NotificationApiValidationError),
         (HTTPStatus.OK, NotificationApiError),
         (HTTPStatus.UNAUTHORIZED, NotificationApiAuthError),
     ],
@@ -236,3 +243,198 @@ async def test_ac35_delete_webhook(
 
     method, url, _, _ = aioclient_mock.mock_calls[0]
     assert (method, str(url)) == ("DELETE", WEBHOOK_URL)
+
+
+async def test_ac36_put_webhook_400_field_errors(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """AC36: a 400 ProblemDetails is parsed into field errors."""
+    aioclient_mock.put(
+        WEBHOOK_URL,
+        status=HTTPStatus.BAD_REQUEST,
+        json={
+            "title": "One or more validation errors occurred.",
+            "status": 400,
+            "errors": {"secret": ["Must decode to 32-512 bytes."]},
+        },
+        headers={"Content-Type": "application/problem+json"},
+    )
+
+    with pytest.raises(NotificationApiValidationError) as exc_info:
+        await _client(hass).async_put_webhook("http://homeassistant:8123/x", "c2Vj")
+
+    assert exc_info.value.status == HTTPStatus.BAD_REQUEST
+    assert exc_info.value.problem.errors == {
+        "secret": ("Must decode to 32-512 bytes.",)
+    }
+    assert str(exc_info.value) == "HTTP 400: secret: Must decode to 32-512 bytes."
+
+
+# Send (spec 4.1)
+
+
+async def test_ac01_notify_minimal_payload(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """POST /notify sends only the fields that are set and parses the 202."""
+    aioclient_mock.post(NOTIFY_URL, status=HTTPStatus.ACCEPTED, json=NOTIFY_OK)
+
+    result = await _client(hass).async_notify(["contact:alice"], "Hello")
+
+    assert result == NotifyResult(
+        notification_id="ntf_01",
+        deliveries=(
+            Delivery(
+                delivery_id="dlv_1",
+                contact="alice",
+                via="contact:alice",
+                channel="telegram",
+                status="queued",
+            ),
+        ),
+    )
+    assert result.as_dict() == NOTIFY_OK
+    method, url, body, headers = aioclient_mock.mock_calls[0]
+    assert (method, str(url)) == ("POST", NOTIFY_URL)
+    assert body == {"to": ["contact:alice"], "message": "Hello", "priority": "normal"}
+    assert headers["Authorization"] == f"Bearer {TOKEN}"
+
+
+async def test_notify_all_fields(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Every optional field is sent when set; an empty channel list is omitted."""
+    aioclient_mock.post(NOTIFY_URL, status=HTTPStatus.ACCEPTED, json=NOTIFY_OK)
+    client = _client(hass)
+
+    await client.async_notify(
+        ("group:family", "contact:alice"),
+        "Door opened",
+        title="Front door",
+        priority="high",
+        channels=("telegram",),
+        tag="front_door_alarm",
+        source="automation.front_door",
+        idempotency_key="6f1c",
+    )
+    await client.async_notify(["contact:alice"], "Hi", channels=[])
+
+    assert aioclient_mock.mock_calls[0][2] == {
+        "to": ["group:family", "contact:alice"],
+        "message": "Door opened",
+        "title": "Front door",
+        "priority": "high",
+        "channels": ["telegram"],
+        "tag": "front_door_alarm",
+        "source": "automation.front_door",
+        "idempotency_key": "6f1c",
+    }
+    assert "channels" not in aioclient_mock.mock_calls[1][2]
+
+
+async def test_ac12_notify_replay_200_accepted(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """AC12: a repeated idempotency key may return the original response as 200."""
+    aioclient_mock.post(NOTIFY_URL, json=NOTIFY_OK)
+
+    result = await _client(hass).async_notify(["contact:alice"], "Hi")
+
+    assert result.notification_id == "ntf_01"
+
+
+@pytest.mark.parametrize(
+    ("mock_kwargs", "expected"),
+    [
+        ({"status": HTTPStatus.NOT_FOUND}, NotificationApiNotFoundError),
+        (
+            {"status": HTTPStatus.BAD_REQUEST, "text": "not json"},
+            NotificationApiValidationError,
+        ),
+        (
+            {"status": HTTPStatus.BAD_REQUEST, "json": ["x"]},
+            NotificationApiValidationError,
+        ),
+        (
+            {
+                "status": HTTPStatus.UNPROCESSABLE_ENTITY,
+                "json": {"title": "No deliveries"},
+            },
+            NotificationApiNoDeliveriesError,
+        ),
+        ({"status": HTTPStatus.UNAUTHORIZED}, NotificationApiAuthError),
+        ({"exc": aiohttp.ClientConnectionError()}, NotificationApiConnectionError),
+        (
+            {"status": HTTPStatus.ACCEPTED, "json": {"deliveries": []}},
+            NotificationApiError,
+        ),
+        (
+            {
+                "status": HTTPStatus.ACCEPTED,
+                "json": {"notification_id": "n", "deliveries": [{}]},
+            },
+            NotificationApiError,
+        ),
+        ({"status": HTTPStatus.CONFLICT}, NotificationApiError),
+    ],
+    ids=[
+        "404_addon_without_notify",
+        "400_no_problem_body",
+        "400_body_not_object",
+        "422",
+        "401",
+        "connection_error",
+        "202_missing_id",
+        "202_delivery_missing_keys",
+        "409_unexpected",
+    ],
+)
+async def test_notify_errors(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    mock_kwargs: dict[str, object],
+    expected: type[Exception],
+) -> None:
+    """Each failure maps to the right typed exception."""
+    aioclient_mock.post(NOTIFY_URL, **mock_kwargs)
+
+    with pytest.raises(expected) as exc_info:
+        await _client(hass).async_notify(["contact:alice"], "Hi")
+    assert type(exc_info.value) is expected
+
+
+def test_problem_details_describe() -> None:
+    """Field errors win over detail, which wins over title."""
+    assert (
+        ProblemDetails(
+            title="t",
+            detail="d",
+            errors={"to": ("Unknown handle contact:bob.",), "priority": ()},
+        ).describe()
+        == "to: Unknown handle contact:bob.; priority"
+    )
+    assert ProblemDetails(title="t", detail="d").describe() == "d"
+    assert ProblemDetails(title="t").describe() == "t"
+    assert ProblemDetails().describe() == "no details"
+
+
+async def test_ac09_problem_errors_parsing(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A string instead of a list, and non-string title/detail, are tolerated."""
+    aioclient_mock.post(
+        NOTIFY_URL,
+        status=HTTPStatus.BAD_REQUEST,
+        json={
+            "title": 1,
+            "detail": None,
+            "errors": {"to": "Unknown handle: contact:bob"},
+        },
+    )
+
+    with pytest.raises(NotificationApiValidationError) as exc_info:
+        await _client(hass).async_notify(["contact:bob"], "Hi")
+
+    assert exc_info.value.problem == ProblemDetails(
+        errors={"to": ("Unknown handle: contact:bob",)}
+    )
