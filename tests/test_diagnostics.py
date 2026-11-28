@@ -15,7 +15,7 @@ from custom_components.notification_api.const import (
     CONF_WEBHOOK_SECRET,
 )
 
-from .const import HOST, INSTANCE_ID, RECIPIENTS, REVISION, TOKEN, VERSION
+from .const import CHANNELS_OK, HOST, INSTANCE_ID, RECIPIENTS, REVISION, TOKEN, VERSION
 
 REDACTED = "**REDACTED**"
 
@@ -40,7 +40,11 @@ async def test_diagnostics_redacts_secrets(
     assert result["coordinator"] == {
         "last_update_success": True,
         "last_exception": None,
-        "data": {"ok": True, "version": VERSION, "instance_id": INSTANCE_ID},
+        "data": {
+            "ping": {"ok": True, "version": VERSION, "instance_id": INSTANCE_ID},
+            "channels": CHANNELS_OK,
+            "channels_supported": True,
+        },
     }
     assert result["recipients_coordinator"] == {
         "last_update_success": True,

@@ -52,7 +52,7 @@ def _client(
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the `notification_api.send` action, whether or not an entry loads."""
+    """Register the actions, whether or not an entry loads."""
     async_setup_services(hass)
     return True
 

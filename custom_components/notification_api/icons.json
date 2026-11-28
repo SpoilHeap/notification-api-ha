@@ -1,5 +1,19 @@
 {
   "entity": {
+    "binary_sensor": {
+      "sms_configured": {
+        "default": "mdi:message-text",
+        "state": {
+          "off": "mdi:message-off"
+        }
+      },
+      "telegram_configured": {
+        "default": "mdi:send",
+        "state": {
+          "off": "mdi:send-lock"
+        }
+      }
+    },
     "sensor": {
       "version": {
         "default": "mdi:information-outline"
@@ -12,6 +26,9 @@
   "services": {
     "send": {
       "service": "mdi:send"
+    },
+    "get_notification": {
+      "service": "mdi:message-badge"
     }
   }
 }

@@ -12,9 +12,16 @@ events:
 | Entity | Description |
 |---|---|
 | `binary_sensor.notification_api_connected` | On while the add-on answers with a valid token. Stays available, so it reads *Disconnected* when the add-on is down. |
+| `binary_sensor.notification_api_sms_configured` | *Configured* while an SMS.to API key is saved on the add-on's Settings page. It doesn't check that the key works: a bad key shows up as failed deliveries. Diagnostic. |
+| `binary_sensor.notification_api_telegram_configured` | *Configured* while a Telegram bot token is saved in the add-on. Until the add-on ships Telegram it is always *Not configured*. Diagnostic. |
 | `sensor.notification_api_add_on_version` | The add-on version. Unavailable while the add-on can't be reached. |
 | `sensor.notification_api_recipients` | How many contacts and groups the add-on has. The `handles` attribute lists them (`contact:alice`, `group:family`, ...). Refreshed every 30 seconds, and immediately when the add-on reports a change. |
 | `notify.notification_api_<type>_<name>` | One per contact and group, for example `notify.notification_api_contact_alice` for `contact:alice` and `notify.notification_api_group_family` for `group:family`. See [Sending](#sending). |
+
+The two channel sensors are read with the connectivity check, every 60 seconds.
+They are unavailable while the add-on is down, and on add-on 0.6.0 and older, which
+can't report its channels (see [Compatibility](#compatibility)); Connected is not
+affected.
 
 > **Sending needs a newer add-on.** The add-on's `POST /notify` endpoint comes with
 > its delivery feature, in a version after 0.3.0. With add-on 0.2.0 and 0.3.0 the
@@ -102,7 +109,7 @@ anywhere else (Developer tools, a dashboard) uses `notification_api.send`, or
 
 ### When sending fails
 
-The action and the notify entities fail with one of these errors:
+The actions and the notify entities fail with one of these errors:
 
 | Error | Meaning |
 |---|---|
@@ -113,6 +120,59 @@ The action and the notify entities fail with one of these errors:
 | *The Notification API add-on is unreachable: ...* | The add-on is stopped, restarting, or failing. |
 | *The Notification API add-on doesn't support sending yet. Update the add-on.* | The installed add-on predates sending (0.3.0 and older). |
 | *The Notification API integration isn't loaded.* | The integration isn't set up, or its setup failed. |
+| *The Notification API add-on has no notification ...* | `get_notification` only: the id is wrong, or the notification was removed by the add-on's retention purge (HTTP 404). |
+| *The Notification API add-on doesn't support delivery status yet. Update the add-on to v0.7.0 or later.* | `get_notification` only: the installed add-on predates it (0.6.0 and older). |
+| *Could not read the notification from the Notification API add-on: ...* | `get_notification` only: the add-on sent an unexpected answer. |
+
+### Delivery status: the `notification_api.get_notification` action
+
+Sending returns as soon as the add-on has queued the deliveries. To see how they
+went, pass the `notification_id` from the send response to
+`notification_api.get_notification`. It only returns data, so it always needs a
+`response_variable`:
+
+```yaml
+actions:
+  - action: notification_api.send
+    data:
+      to: group:family
+      message: Door opened while the alarm is armed
+      priority: high
+    response_variable: sent
+  - delay: "00:01:00"
+  - action: notification_api.get_notification
+    data:
+      notification_id: "{{ sent.notification_id }}"
+    response_variable: status
+  - if:
+      - condition: template
+        value_template: >
+          {{ status.deliveries | selectattr('status', 'ne', 'sent') | list | count > 0 }}
+    then:
+      - action: persistent_notification.create
+        data:
+          title: Front door alert not delivered to everyone
+          message: >
+            {% for d in status.deliveries if d.status != 'sent' %}
+            {{ d.contact }} ({{ d.channel }}): {{ d.status }}{% if d.last_error %}, {{ d.last_error }}{% endif %}
+            {% endfor %}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `notification_id` | yes | The `notification_id` returned by `notification_api.send`. |
+
+The response is the add-on's, as-is:
+
+| Key | Description |
+|---|---|
+| `notification_id`, `priority`, `tag`, `source`, `created_at` | As sent (`tag` and `source` may be `null`). The message and title are not returned. |
+| `deliveries` | In the same order as the send response. Each has `delivery_id`, `contact`, `via` and `channel` as before, and the **current** `status` (`queued`, `sending`, `sent`, `retrying` or `failed`), `attempts`, `last_error`, `next_attempt_at`, `last_attempt_at` and `completed_at`. Times are ISO 8601 UTC; the ones that don't apply are `null`. |
+
+It fails with *The Notification API add-on has no notification ...* when the id is
+wrong or the add-on's retention purge has removed the notification, and with
+*... doesn't support delivery status yet* on add-on 0.6.0 and older. Its other
+errors are the ones in [When sending fails](#when-sending-fails).
 
 ## Events
 
@@ -151,11 +211,23 @@ accepts calls from the local network.
 
 ## Compatibility
 
+The SMS configured and Telegram configured sensors and the
+`notification_api.get_notification` action need add-on **0.7.0 or newer**. With an
+older add-on the two sensors are unavailable (everything else keeps working) and
+`get_notification` fails with *The Notification API add-on doesn't support delivery
+status yet. Update the add-on to v0.7.0 or later.*
+
 | Add-on version | What works |
 |---|---|
 | 0.2.0 | Connected and Add-on version. The add-on has no webhook or recipients endpoints yet, so no events are fired, the Recipients sensor is unavailable and there are no notify entities. A warning is logged once. Sending fails with *doesn't support sending yet*. |
 | 0.3.0 | Events, the Recipients sensor and the notify entities. This add-on version has no contacts or groups yet, so its recipients list is empty and there are no notify entities. Sending fails with *doesn't support sending yet*. |
-| Newer, with delivery | Everything, including sending. When the add-on is updated from 0.2.0, the integration notices the new version, reloads, and registers its webhook. |
+| 0.4.0 and 0.5.0 | As 0.3.0, plus contacts and groups, so the notify entities appear. Sending fails with *doesn't support sending yet*. |
+| 0.6.0 | Everything except the channel sensors and `notification_api.get_notification`, including sending. |
+| 0.7.0 and newer | Everything, including the channel sensors and `notification_api.get_notification`. |
+
+When the add-on is updated from 0.2.0, the integration notices the new version,
+reloads, and registers its webhook. After an update to 0.7.0 the channel sensors
+become available within a minute; no reload is needed.
 
 ## Requirements
 

@@ -41,3 +41,10 @@ send:
     idempotency_key:
       selector:
         text:
+get_notification:
+  fields:
+    notification_id:
+      required: true
+      example: "ntf_019ac63f8e407c3a9d1b2e4f5a6b7c8d"
+      selector:
+        text:

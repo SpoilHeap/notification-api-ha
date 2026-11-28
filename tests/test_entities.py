@@ -7,6 +7,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_FRIENDLY_NAME,
+    ATTR_ICON,
+    STATE_OFF,
     STATE_ON,
     EntityCategory,
 )
@@ -67,3 +69,43 @@ async def test_entities(
     assert device.entry_type is dr.DeviceEntryType.SERVICE
     assert device.sw_version == VERSION
     assert device.configuration_url == f"homeassistant://app/{SLUG}"
+
+
+async def test_channel_sensors(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    entity_registry: er.EntityRegistry,
+) -> None:
+    """One diagnostic binary sensor per channel, on the service device."""
+    connected_entry = entity_registry.async_get(
+        "binary_sensor.notification_api_connected"
+    )
+    assert connected_entry is not None
+    for entity_id, key, name, state in (
+        (
+            "binary_sensor.notification_api_sms_configured",
+            "sms_configured",
+            "Notification API SMS configured",
+            STATE_ON,
+        ),
+        (
+            "binary_sensor.notification_api_telegram_configured",
+            "telegram_configured",
+            "Notification API Telegram configured",
+            STATE_OFF,
+        ),
+    ):
+        sensor = hass.states.get(entity_id)
+        assert sensor is not None
+        assert sensor.state == state
+        assert sensor.attributes[ATTR_FRIENDLY_NAME] == name
+        # No device class: the state translations say Configured / Not configured.
+        assert ATTR_DEVICE_CLASS not in sensor.attributes
+        # Icons come from icons.json, not the state attributes.
+        assert ATTR_ICON not in sensor.attributes
+        reg_entry = entity_registry.async_get(entity_id)
+        assert reg_entry is not None
+        assert reg_entry.unique_id == f"{init_integration.entry_id}_{key}"
+        assert reg_entry.translation_key == key
+        assert reg_entry.entity_category is EntityCategory.DIAGNOSTIC
+        assert reg_entry.device_id == connected_entry.device_id

@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- SMS configured and Telegram configured diagnostic binary sensors, read from the
+  add-on's `GET /channels` with the 60-second connectivity check. On add-ons
+  older than 0.7.0 (no `/channels`) they are unavailable, and the Connected
+  sensor is unaffected.
+- `notification_api.get_notification` action (response only): takes a
+  `notification_id` and returns the notification and the current status of each
+  delivery, as the add-on's `GET /notifications/{id}` sends it. An unknown or
+  purged id is a validation error; an add-on older than 0.7.0 gets its own
+  "update the add-on" error.
+
 ## [0.3.0] - 2026-11-27
 
 ### Added

@@ -40,7 +40,7 @@ class NotificationApiEntity[
             identifiers={(DOMAIN, entry.entry_id)},
             name=DEFAULT_NAME,
             entry_type=DeviceEntryType.SERVICE,
-            sw_version=ping.data.version if ping.data else None,
+            sw_version=ping.data.ping.version if ping.data else None,
         )
         # Known only for discovered entries: the slug includes the repository hash.
         # homeassistant://app/<slug> opens the add-on's panel, as core does for

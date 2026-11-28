@@ -1,4 +1,4 @@
-"""Coordinators: one pings the add-on, one polls the recipients list.
+"""Coordinators: one pings the add-on (and reads its channels), one polls recipients.
 
 Two coordinators rather than one, because the two endpoints differ in every way
 that matters to a coordinator:
@@ -8,6 +8,11 @@ that matters to a coordinator:
   Recipients sensor unavailable, not mark the add-on disconnected or fail setup.
 - Change detection: recipients use `If-None-Match` and `always_update=False`, so a
   304 keeps the cached data without notifying entities.
+
+`GET /channels` rides on the ping poll (spec 11): it changes rarely and needs no
+interval of its own. Only the ping decides whether that poll succeeded, so a failing
+`/channels` (404 on add-on v0.6.0 and older) makes just the channel sensors
+unavailable.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
+    ChannelsResult,
     NotificationApiAuthError,
     NotificationApiClient,
     NotificationApiError,
@@ -36,6 +42,17 @@ from .const import (
     RECIPIENTS_UPDATE_INTERVAL,
     UPDATE_INTERVAL,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectivityData:
+    """What the ping coordinator polls: `/ping`, then `/channels`."""
+
+    ping: PingResult
+    # None while `/channels` fails or isn't supported.
+    channels: ChannelsResult | None = None
+    # False when `/channels` answered 404: the add-on predates v0.7.0.
+    channels_supported: bool = True
 
 
 @dataclass(slots=True)
@@ -67,8 +84,11 @@ def _update_failed(err: Exception) -> UpdateFailed:
     )
 
 
-class NotificationApiCoordinator(DataUpdateCoordinator[PingResult]):
-    """Polls `GET /api/v1/ping` to track connectivity, version and instance id."""
+class NotificationApiCoordinator(DataUpdateCoordinator[ConnectivityData]):
+    """Polls `GET /api/v1/ping` to track connectivity, version and instance id.
+
+    After a successful ping it also reads `GET /api/v1/channels`.
+    """
 
     config_entry: NotificationApiConfigEntry
 
@@ -89,8 +109,8 @@ class NotificationApiCoordinator(DataUpdateCoordinator[PingResult]):
         self.client = client
 
     @override
-    async def _async_update_data(self) -> PingResult:
-        """Ping the add-on."""
+    async def _async_update_data(self) -> ConnectivityData:
+        """Ping the add-on, then read its channels."""
         try:
             result = await self.client.async_ping()
         except NotificationApiAuthError as err:
@@ -100,19 +120,42 @@ class NotificationApiCoordinator(DataUpdateCoordinator[PingResult]):
 
         reinstalled = self._async_check_instance_id(result.instance_id)
         if self.data is not None:
-            if self.data.version != result.version:
+            previous = self.data.ping
+            if previous.version != result.version:
                 self._async_update_device_version(result.version)
             # Reloading re-registers the webhook and reloads the recipients. Needed
             # after a reinstall (fresh database), and after an add-on update while
             # the webhook isn't registered (an update from v0.2.0 adds `/webhook`).
             if reinstalled or (
-                self.data.version != result.version
+                previous.version != result.version
                 and not self.config_entry.runtime_data.webhook_registered
             ):
                 self.hass.config_entries.async_schedule_reload(
                     self.config_entry.entry_id
                 )
-        return result
+        return await self._async_fetch_channels(result)
+
+    async def _async_fetch_channels(self, ping: PingResult) -> ConnectivityData:
+        """Read `/channels`. Never fails the poll, except on a rejected token."""
+        try:
+            channels = await self.client.async_get_channels()
+        except NotificationApiAuthError as err:
+            # The ping just accepted the token, so this is a rotation in between.
+            raise _auth_failed() from err
+        except NotificationApiNotFoundError:
+            # Add-on v0.6.0 and older. Keep asking: an add-on update is then
+            # picked up on the next poll.
+            LOGGER.debug("The add-on has no channels endpoint (older than v0.7.0)")
+            return ConnectivityData(ping=ping, channels_supported=False)
+        except NotificationApiError as err:
+            if self.data is None or self.data.channels is not None:
+                LOGGER.warning(
+                    "Could not read the Notification API add-on's channels: %s", err
+                )
+            return ConnectivityData(ping=ping)
+        if self.data is not None and self.data.channels is None:
+            LOGGER.debug("Read the Notification API add-on's channels again")
+        return ConnectivityData(ping=ping, channels=channels)
 
     def _async_check_instance_id(self, instance_id: str | None) -> bool:
         """Store the add-on's instance id (spec 4.2). Return True if it changed.

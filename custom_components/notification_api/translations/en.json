@@ -46,6 +46,20 @@
     "binary_sensor": {
       "connected": {
         "name": "Connected"
+      },
+      "sms_configured": {
+        "name": "SMS configured",
+        "state": {
+          "on": "Configured",
+          "off": "Not configured"
+        }
+      },
+      "telegram_configured": {
+        "name": "Telegram configured",
+        "state": {
+          "on": "Configured",
+          "off": "Not configured"
+        }
       }
     },
     "notify": {
@@ -107,6 +121,15 @@
     },
     "send_failed": {
       "message": "The Notification API add-on couldn't send the notification: {error}"
+    },
+    "notification_not_found": {
+      "message": "The Notification API add-on has no notification {notification_id}. The id may be wrong, or the notification was removed by the add-on's retention purge."
+    },
+    "get_notification_unsupported": {
+      "message": "The Notification API add-on doesn't support delivery status yet. Update the add-on to v0.7.0 or later."
+    },
+    "get_notification_failed": {
+      "message": "Could not read the notification from the Notification API add-on: {error}"
     }
   },
   "selector": {
@@ -157,6 +180,16 @@
         "idempotency_key": {
           "name": "Idempotency key",
           "description": "Sending the same key again within 24 hours returns the original response and sends nothing new."
+        }
+      }
+    },
+    "get_notification": {
+      "name": "Get notification",
+      "description": "Returns a notification sent through the Notification API add-on and the current status of each of its deliveries. The message and title are not returned.",
+      "fields": {
+        "notification_id": {
+          "name": "Notification ID",
+          "description": "The notification_id returned by the send action, such as ntf_019ac63f8e407c3a9d1b2e4f5a6b7c8d."
         }
       }
     }

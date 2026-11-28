@@ -34,6 +34,7 @@ from custom_components.notification_api.receiver import build_webhook_url
 
 from .common import calls, mock_addon
 from .const import (
+    CHANNELS_URL,
     INSTANCE_ID,
     NEW_INSTANCE_ID,
     PING_OK,
@@ -48,6 +49,8 @@ from .const import (
 CONNECTED = "binary_sensor.notification_api_connected"
 VERSION_SENSOR = "sensor.notification_api_add_on_version"
 RECIPIENTS_SENSOR = "sensor.notification_api_recipients"
+SMS_SENSOR = "binary_sensor.notification_api_sms_configured"
+TELEGRAM_SENSOR = "binary_sensor.notification_api_telegram_configured"
 
 
 def _webhook_registered_in_ha(hass: HomeAssistant, webhook_id: str) -> bool:
@@ -77,6 +80,8 @@ def _mock_v020(aioclient_mock: AiohttpClientMocker) -> None:
         ping=PING_V020,
         webhook_status=HTTPStatus.NOT_FOUND,
         recipients_status=HTTPStatus.NOT_FOUND,
+        channels={"status": HTTPStatus.NOT_FOUND},
+        notification={"status": HTTPStatus.NOT_FOUND},
     )
 
 
@@ -89,7 +94,7 @@ async def test_setup_and_unload(
     """The entry loads, listens on its webhook, and unregisters it on unload."""
     assert init_integration.state is ConfigEntryState.LOADED
     data = init_integration.runtime_data
-    assert data.coordinator.data.version == "0.1.0"
+    assert data.coordinator.data.ping.version == "0.1.0"
     assert data.webhook_registered
     webhook_id = init_integration.data[CONF_WEBHOOK_ID]
     assert _webhook_registered_in_ha(hass, webhook_id)
@@ -512,6 +517,177 @@ async def test_recipients_304_without_revision_is_an_error(
 
     assert mock_config_entry.state is ConfigEntryState.LOADED
     assert hass.states.get(RECIPIENTS_SENSOR).state == STATE_UNAVAILABLE
+
+
+# Channels (spec 4.2, 11; AC42)
+
+
+async def test_ac42_channels_read_on_the_ping_poll(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """AC42: /channels is read after every ping, so a new key shows up in 60 s."""
+    assert hass.states.get(SMS_SENSOR).state == STATE_ON
+    assert hass.states.get(TELEGRAM_SENSOR).state == STATE_OFF
+    configured = {
+        "channels": [
+            {"name": "telegram", "status": "configured"},
+            {"name": "sms", "status": "not_configured"},
+        ]
+    }
+    mock_addon(aioclient_mock, channels={"json": configured})
+
+    await _tick(hass, freezer)
+
+    assert len(calls(aioclient_mock, "GET", CHANNELS_URL)) == 1
+    assert hass.states.get(SMS_SENSOR).state == STATE_OFF
+    assert hass.states.get(TELEGRAM_SENSOR).state == STATE_ON
+
+
+async def test_channels_404_addon_before_v070(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Add-on v0.6.0 has no /channels: setup works, only the channels are unavailable."""
+    mock_addon(
+        aioclient_mock,
+        ping={**PING_OK, "version": "0.6.0"},
+        channels={"status": HTTPStatus.NOT_FOUND},
+    )
+    await _setup(hass, mock_config_entry)
+
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+    coordinator = mock_config_entry.runtime_data.coordinator
+    assert coordinator.last_update_success
+    assert not coordinator.data.channels_supported
+    assert hass.states.get(CONNECTED).state == STATE_ON
+    assert hass.states.get(VERSION_SENSOR).state == "0.6.0"
+    assert hass.states.get(SMS_SENSOR).state == STATE_UNAVAILABLE
+    assert hass.states.get(TELEGRAM_SENSOR).state == STATE_UNAVAILABLE
+
+    # Still asked on every poll, so updating the add-on brings them back.
+    mock_addon(aioclient_mock, ping={**PING_OK, "version": "0.7.0"})
+    await _tick(hass, freezer)
+
+    assert coordinator.data.channels_supported
+    assert hass.states.get(SMS_SENSOR).state == STATE_ON
+    assert hass.states.get(TELEGRAM_SENSOR).state == STATE_OFF
+
+
+@pytest.mark.parametrize(
+    "channels",
+    [
+        {"status": HTTPStatus.INTERNAL_SERVER_ERROR},
+        {"exc": TimeoutError()},
+        {"json": {"channels": "sms"}},
+    ],
+    ids=["500", "timeout", "malformed"],
+)
+async def test_channels_error_leaves_connectivity_alone(
+    hass: HomeAssistant,
+    *,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+    channels: dict[str, object],
+) -> None:
+    """A failing /channels makes only the channel sensors unavailable, and recovers."""
+    mock_addon(aioclient_mock, channels=channels)
+
+    await _tick(hass, freezer)
+
+    coordinator = init_integration.runtime_data.coordinator
+    assert coordinator.last_update_success
+    assert coordinator.data.channels_supported
+    assert hass.states.get(CONNECTED).state == STATE_ON
+    assert hass.states.get(VERSION_SENSOR).state == "0.1.0"
+    assert hass.states.get(SMS_SENSOR).state == STATE_UNAVAILABLE
+    assert hass.states.get(TELEGRAM_SENSOR).state == STATE_UNAVAILABLE
+    assert (
+        caplog.text.count("Could not read the Notification API add-on's channels") == 1
+    )
+
+    # Logged once while it keeps failing.
+    await _tick(hass, freezer)
+    assert (
+        caplog.text.count("Could not read the Notification API add-on's channels") == 1
+    )
+
+    mock_addon(aioclient_mock)
+    await _tick(hass, freezer)
+
+    assert hass.states.get(SMS_SENSOR).state == STATE_ON
+    assert hass.states.get(TELEGRAM_SENSOR).state == STATE_OFF
+
+
+async def test_channel_missing_from_response_is_unavailable(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A channel the add-on doesn't report has no state to show."""
+    mock_addon(
+        aioclient_mock,
+        channels={"json": {"channels": [{"name": "sms", "status": "configured"}]}},
+    )
+
+    await _tick(hass, freezer)
+
+    assert hass.states.get(SMS_SENSOR).state == STATE_ON
+    assert hass.states.get(TELEGRAM_SENSOR).state == STATE_UNAVAILABLE
+
+
+async def test_channels_unavailable_while_ping_fails(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """When the add-on is down the channels aren't read, and are unavailable."""
+    mock_addon(aioclient_mock, exc=TimeoutError())
+
+    await _tick(hass, freezer)
+
+    assert hass.states.get(CONNECTED).state == STATE_OFF
+    assert hass.states.get(SMS_SENSOR).state == STATE_UNAVAILABLE
+    assert hass.states.get(TELEGRAM_SENSOR).state == STATE_UNAVAILABLE
+    assert not calls(aioclient_mock, "GET", CHANNELS_URL)
+
+
+async def test_channels_401_starts_reauth(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A token rejected by /channels starts reauth, like the other endpoints."""
+    mock_addon(aioclient_mock, channels={"status": HTTPStatus.UNAUTHORIZED})
+
+    await _tick(hass, freezer)
+
+    [flow] = hass.config_entries.flow.async_progress()
+    assert flow["context"]["source"] == SOURCE_REAUTH
+
+
+async def test_setup_survives_channels_error(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A /channels failure during the first refresh doesn't fail setup."""
+    mock_addon(aioclient_mock, channels={"status": HTTPStatus.BAD_GATEWAY})
+    await _setup(hass, mock_config_entry)
+
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+    assert hass.states.get(CONNECTED).state == STATE_ON
+    assert hass.states.get(SMS_SENSOR).state == STATE_UNAVAILABLE
+    assert mock_config_entry.runtime_data.coordinator.data.channels is None
 
 
 # Removal

@@ -19,6 +19,9 @@ PING_URL = f"{BASE_URL}/ping"
 WEBHOOK_URL = f"{BASE_URL}/webhook"
 RECIPIENTS_URL = f"{BASE_URL}/recipients"
 NOTIFY_URL = f"{BASE_URL}/notify"
+CHANNELS_URL = f"{BASE_URL}/channels"
+NOTIFICATION_ID = "ntf_019ac63f8e407c3a9d1b2e4f5a6b7c8d"
+NOTIFICATION_URL = f"{BASE_URL}/notifications/{NOTIFICATION_ID}"
 
 PING_OK = {"ok": True, "version": VERSION, "instance_id": INSTANCE_ID}
 # The released add-on v0.2.0: no instance_id, no /webhook, no /recipients.
@@ -40,6 +43,37 @@ NOTIFY_OK = {
             "via": "contact:alice",
             "channel": "telegram",
             "status": "queued",
+        }
+    ],
+}
+
+# SMS is configured, Telegram isn't (it hasn't shipped yet).
+CHANNELS_OK = {
+    "channels": [
+        {"name": "telegram", "status": "not_configured"},
+        {"name": "sms", "status": "configured"},
+    ]
+}
+
+# `GET /notifications/{id}` (spec 4.2), one delivery being retried.
+NOTIFICATION_OK = {
+    "notification_id": NOTIFICATION_ID,
+    "priority": "high",
+    "tag": "front_door_alarm",
+    "source": "automation.front_door",
+    "created_at": "2026-11-27T16:15:20Z",
+    "deliveries": [
+        {
+            "delivery_id": "dlv_019ac63f8e417d0c8a2b3c4d5e6f7a8b",
+            "contact": "alice",
+            "via": "group:family",
+            "channel": "sms",
+            "status": "retrying",
+            "attempts": 1,
+            "last_error": "SMS.to answered HTTP 503: Service Unavailable",
+            "next_attempt_at": "2026-11-27T16:15:50Z",
+            "last_attempt_at": "2026-11-27T16:15:20Z",
+            "completed_at": None,
         }
     ],
 }
