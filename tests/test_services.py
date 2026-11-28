@@ -20,11 +20,27 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 
-from custom_components.notification_api.const import DOMAIN, SERVICE_SEND
-from custom_components.notification_api.services import SEND_SCHEMA, source_from_context
+from custom_components.notification_api.const import (
+    DOMAIN,
+    SERVICE_GET_NOTIFICATION,
+    SERVICE_SEND,
+)
+from custom_components.notification_api.services import (
+    GET_NOTIFICATION_SCHEMA,
+    SEND_SCHEMA,
+    source_from_context,
+)
 
 from .common import calls, mock_addon
-from .const import NOTIFY_OK, NOTIFY_URL
+from .const import (
+    BASE_URL,
+    NOTIFICATION_ID,
+    NOTIFICATION_OK,
+    NOTIFICATION_URL,
+    NOTIFY_OK,
+    NOTIFY_URL,
+    PING_OK,
+)
 
 COMPONENT = Path(__file__).parent.parent / "custom_components" / "notification_api"
 ALICE = "notify.notification_api_contact_alice"
@@ -220,21 +236,32 @@ async def test_schema_rejects_invalid_data(
     assert not calls(addon, "POST", NOTIFY_URL)
 
 
-def test_services_yaml_matches_schema() -> None:
+@pytest.mark.parametrize(
+    ("service", "schema", "required"),
+    [
+        (SERVICE_SEND, SEND_SCHEMA, {"to", "message"}),
+        (SERVICE_GET_NOTIFICATION, GET_NOTIFICATION_SCHEMA, {"notification_id"}),
+    ],
+)
+def test_services_yaml_matches_schema(
+    service: str, schema: probatio.Schema, required: set[str]
+) -> None:
     """services.yaml and strings.json describe exactly the schema's fields."""
     services = yaml.safe_load((COMPONENT / "services.yaml").read_text("utf-8"))
     strings = json.loads((COMPONENT / "strings.json").read_text("utf-8"))
-    schema_fields = {str(key) for key in SEND_SCHEMA.schema}
+    icons = json.loads((COMPONENT / "icons.json").read_text("utf-8"))
+    schema_fields = {str(key) for key in schema.schema}
 
-    assert set(services) == {SERVICE_SEND}
-    assert set(services[SERVICE_SEND]["fields"]) == schema_fields
-    assert set(strings["services"][SERVICE_SEND]["fields"]) == schema_fields
-    required = {
+    assert set(services) == {SERVICE_SEND, SERVICE_GET_NOTIFICATION}
+    assert set(strings["services"]) == set(services)
+    assert set(icons["services"]) == set(services)
+    assert set(services[service]["fields"]) == schema_fields
+    assert set(strings["services"][service]["fields"]) == schema_fields
+    assert {
         name
-        for name, field in services[SERVICE_SEND]["fields"].items()
+        for name, field in services[service]["fields"].items()
         if field.get("required")
-    }
-    assert required == {"to", "message"}
+    } == required
 
 
 # source
@@ -431,3 +458,179 @@ async def test_no_loaded_entry(
 
     assert exc_info.value.translation_key == "not_loaded"
     assert not calls(aioclient_mock, "POST", NOTIFY_URL)
+
+
+# notification_api.get_notification (spec 4.2, 11; AC41)
+
+
+async def _get_notification(hass: HomeAssistant, data: dict[str, Any]) -> Any:
+    return await hass.services.async_call(
+        DOMAIN, SERVICE_GET_NOTIFICATION, data, blocking=True, return_response=True
+    )
+
+
+async def test_ac41_get_notification(
+    hass: HomeAssistant, addon: AiohttpClientMocker
+) -> None:
+    """AC41: the add-on's body is the response, as-is (snake_case)."""
+    assert hass.services.has_service(DOMAIN, SERVICE_GET_NOTIFICATION)
+
+    response = await _get_notification(hass, {"notification_id": NOTIFICATION_ID})
+
+    assert response == NOTIFICATION_OK
+    assert len(calls(addon, "GET", NOTIFICATION_URL)) == 1
+
+
+async def test_get_notification_encodes_the_id(
+    hass: HomeAssistant, addon: AiohttpClientMocker
+) -> None:
+    """An id with a `/` stays one path segment."""
+    url = f"{BASE_URL}/notifications/ntf_a%2Fb"
+    addon.get(url, json=NOTIFICATION_OK)
+
+    await _get_notification(hass, {"notification_id": "ntf_a/b"})
+
+    assert len(calls(addon, "GET", url)) == 1
+
+
+async def test_get_notification_requires_return_response(
+    hass: HomeAssistant, addon: AiohttpClientMocker
+) -> None:
+    """Response-only: calling it without asking for the response is refused."""
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_GET_NOTIFICATION,
+            {"notification_id": NOTIFICATION_ID},
+            blocking=True,
+        )
+    assert not calls(addon, "GET", NOTIFICATION_URL)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [{}, {"notification_id": ""}, {"notification_id": NOTIFICATION_ID, "x": 1}],
+    ids=["missing", "empty", "extra"],
+)
+async def test_get_notification_schema(
+    hass: HomeAssistant, addon: AiohttpClientMocker, data: dict[str, Any]
+) -> None:
+    """Invalid data is refused before anything is requested."""
+    with pytest.raises(probatio.Invalid):
+        await _get_notification(hass, data)
+    assert not calls(addon, "GET", NOTIFICATION_URL)
+
+
+async def test_get_notification_unknown_id(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """An unknown, malformed or purged id (404) is a translated validation error."""
+    mock_addon(
+        aioclient_mock,
+        notification={
+            "status": HTTPStatus.NOT_FOUND,
+            "json": {"title": "Not Found", "status": 404},
+            "headers": {"Content-Type": "application/problem+json"},
+        },
+    )
+
+    with pytest.raises(ServiceValidationError) as exc_info:
+        await _get_notification(hass, {"notification_id": NOTIFICATION_ID})
+
+    assert exc_info.value.translation_key == "notification_not_found"
+    assert exc_info.value.translation_placeholders == {
+        "notification_id": NOTIFICATION_ID
+    }
+    assert NOTIFICATION_ID in str(exc_info.value)
+
+
+async def test_get_notification_addon_before_v070(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """When /channels is a 404 too, the add-on predates v0.7.0: say so."""
+    mock_addon(
+        aioclient_mock,
+        ping={**PING_OK, "version": "0.6.0"},
+        channels={"status": HTTPStatus.NOT_FOUND},
+        notification={"status": HTTPStatus.NOT_FOUND},
+    )
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await _get_notification(hass, {"notification_id": NOTIFICATION_ID})
+
+    assert type(exc_info.value) is HomeAssistantError
+    assert exc_info.value.translation_key == "get_notification_unsupported"
+    assert "v0.7.0" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("notification", "translation_key"),
+    [
+        ({"exc": aiohttp.ClientConnectionError()}, "addon_unreachable"),
+        ({"exc": TimeoutError()}, "addon_unreachable"),
+        ({"status": HTTPStatus.SERVICE_UNAVAILABLE}, "addon_unreachable"),
+        ({"status": HTTPStatus.BAD_REQUEST, "json": {}}, "get_notification_failed"),
+        ({"status": HTTPStatus.CONFLICT}, "get_notification_failed"),
+        ({"json": {"notification_id": "x"}}, "get_notification_failed"),
+    ],
+    ids=["connection_error", "timeout", "5xx", "400", "unexpected", "malformed"],
+)
+async def test_get_notification_errors(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    notification: dict[str, Any],
+    translation_key: str,
+) -> None:
+    """Other failures map to a HomeAssistantError, as for `send`."""
+    mock_addon(aioclient_mock, notification=notification)
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await _get_notification(hass, {"notification_id": NOTIFICATION_ID})
+
+    assert type(exc_info.value) is HomeAssistantError
+    assert exc_info.value.translation_key == translation_key
+    assert not hass.config_entries.flow.async_progress()
+
+
+async def test_get_notification_401_starts_reauth(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A rejected token starts reauth and fails the call."""
+    mock_addon(aioclient_mock, notification={"status": HTTPStatus.UNAUTHORIZED})
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await _get_notification(hass, {"notification_id": NOTIFICATION_ID})
+    await hass.async_block_till_done()
+
+    assert exc_info.value.translation_key == "auth_failed"
+    [flow] = hass.config_entries.flow.async_progress()
+    assert flow["context"]["source"] == SOURCE_REAUTH
+    assert flow["context"]["entry_id"] == init_integration.entry_id
+
+
+async def test_get_notification_no_loaded_entry(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """With the entry unloaded the action stays registered and refuses to run."""
+    assert await hass.config_entries.async_unload(init_integration.entry_id)
+    await hass.async_block_till_done()
+    mock_addon(aioclient_mock)
+
+    assert hass.services.has_service(DOMAIN, SERVICE_GET_NOTIFICATION)
+    with pytest.raises(ServiceValidationError) as exc_info:
+        await _get_notification(hass, {"notification_id": NOTIFICATION_ID})
+
+    assert exc_info.value.translation_key == "not_loaded"
+    assert not calls(aioclient_mock, "GET", NOTIFICATION_URL)

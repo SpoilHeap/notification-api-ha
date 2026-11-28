@@ -12,6 +12,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from custom_components.notification_api.api import (
+    Channel,
+    ChannelsResult,
     Delivery,
     NotificationApiAuthError,
     NotificationApiClient,
@@ -29,8 +31,14 @@ from custom_components.notification_api.api import (
 )
 
 from .const import (
+    BASE_URL,
+    CHANNELS_OK,
+    CHANNELS_URL,
     HOST,
     INSTANCE_ID,
+    NOTIFICATION_ID,
+    NOTIFICATION_OK,
+    NOTIFICATION_URL,
     NOTIFY_OK,
     NOTIFY_URL,
     PING_OK,
@@ -438,3 +446,170 @@ async def test_ac09_problem_errors_parsing(
     assert exc_info.value.problem == ProblemDetails(
         errors={"to": ("Unknown handle: contact:bob",)}
     )
+
+
+# GET /notifications/{id} (spec 4.2, AC41)
+
+
+async def test_ac41_get_notification(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """AC41: the body is returned as the add-on sent it."""
+    aioclient_mock.get(NOTIFICATION_URL, json=NOTIFICATION_OK)
+
+    assert await _client(hass).async_get_notification(NOTIFICATION_ID) == (
+        NOTIFICATION_OK
+    )
+
+    [(method, url, _, headers)] = aioclient_mock.mock_calls
+    assert method == "GET"
+    assert str(url) == NOTIFICATION_URL
+    assert headers["Authorization"] == f"Bearer {TOKEN}"
+
+
+async def test_get_notification_keeps_extra_keys(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Keys a later add-on adds are passed through, not dropped."""
+    body = {**NOTIFICATION_OK, "future_field": 1}
+    aioclient_mock.get(NOTIFICATION_URL, json=body)
+
+    assert await _client(hass).async_get_notification(NOTIFICATION_ID) == body
+
+
+async def test_get_notification_encodes_the_id(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """The id stays one path segment: `/`, `?` and spaces are percent-encoded."""
+    # yarl un-escapes `%3D` to `=`, which is harmless inside a path segment.
+    url = f"{BASE_URL}/notifications/..%2Fping%3Fx%3D1%20y"
+    aioclient_mock.get(url, json=NOTIFICATION_OK)
+
+    await _client(hass).async_get_notification("../ping?x=1 y")
+
+    [(_, called, _, _)] = aioclient_mock.mock_calls
+    assert called.raw_path == "/api/v1/notifications/..%2Fping%3Fx=1%20y"
+
+
+@pytest.mark.parametrize("notification_id", [".", ".."])
+async def test_get_notification_dot_segments_are_not_sent(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, notification_id: str
+) -> None:
+    """`.` and `..` would be normalised into another path, so they are a 404."""
+    with pytest.raises(NotificationApiNotFoundError):
+        await _client(hass).async_get_notification(notification_id)
+    assert not aioclient_mock.mock_calls
+
+
+def _without(body: dict[str, object], key: str) -> dict[str, object]:
+    return {k: v for k, v in body.items() if k != key}
+
+
+@pytest.mark.parametrize(
+    ("mock_kwargs", "expected"),
+    [
+        ({"status": HTTPStatus.NOT_FOUND}, NotificationApiNotFoundError),
+        ({"status": HTTPStatus.UNAUTHORIZED}, NotificationApiAuthError),
+        ({"status": HTTPStatus.INTERNAL_SERVER_ERROR}, NotificationApiConnectionError),
+        ({"exc": TimeoutError()}, NotificationApiConnectionError),
+        ({"text": "not json"}, NotificationApiError),
+        ({"json": _without(NOTIFICATION_OK, "tag")}, NotificationApiError),
+        ({"json": _without(NOTIFICATION_OK, "deliveries")}, NotificationApiError),
+        ({"json": {**NOTIFICATION_OK, "deliveries": {}}}, NotificationApiError),
+        ({"json": {**NOTIFICATION_OK, "deliveries": ["x"]}}, NotificationApiError),
+        (
+            {
+                "json": {
+                    **NOTIFICATION_OK,
+                    "deliveries": [
+                        _without(NOTIFICATION_OK["deliveries"][0], "attempts")  # type: ignore[index]
+                    ],
+                }
+            },
+            NotificationApiError,
+        ),
+    ],
+    ids=[
+        "404_unknown_or_old_addon",
+        "401",
+        "500",
+        "timeout",
+        "not_json",
+        "missing_tag",
+        "missing_deliveries",
+        "deliveries_not_a_list",
+        "delivery_not_an_object",
+        "delivery_missing_keys",
+    ],
+)
+async def test_get_notification_errors(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    mock_kwargs: dict[str, object],
+    expected: type[Exception],
+) -> None:
+    """Each failure maps to the right typed exception."""
+    aioclient_mock.get(NOTIFICATION_URL, **mock_kwargs)
+
+    with pytest.raises(expected) as exc_info:
+        await _client(hass).async_get_notification(NOTIFICATION_ID)
+    assert type(exc_info.value) is expected
+
+
+# GET /channels (spec 4.2, AC42)
+
+
+async def test_ac42_channels(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """AC42: both channels are parsed, and looked up by name."""
+    aioclient_mock.get(CHANNELS_URL, json=CHANNELS_OK)
+
+    result = await _client(hass).async_get_channels()
+
+    assert result == ChannelsResult(
+        channels=(
+            Channel(name="telegram", status="not_configured"),
+            Channel(name="sms", status="configured"),
+        )
+    )
+    assert result.get("sms") == Channel(name="sms", status="configured")
+    assert result.get("sms").configured  # type: ignore[union-attr]
+    assert not result.get("telegram").configured  # type: ignore[union-attr]
+    assert result.get("email") is None
+    [(_, url, _, headers)] = aioclient_mock.mock_calls
+    assert str(url) == CHANNELS_URL
+    assert headers["Authorization"] == f"Bearer {TOKEN}"
+
+
+@pytest.mark.parametrize(
+    ("mock_kwargs", "expected"),
+    [
+        ({"status": HTTPStatus.NOT_FOUND}, NotificationApiNotFoundError),
+        ({"status": HTTPStatus.UNAUTHORIZED}, NotificationApiAuthError),
+        ({"status": HTTPStatus.BAD_GATEWAY}, NotificationApiConnectionError),
+        ({"json": {}}, NotificationApiError),
+        ({"json": {"channels": ["sms"]}}, NotificationApiError),
+        ({"json": {"channels": [{"name": "sms"}]}}, NotificationApiError),
+    ],
+    ids=[
+        "404_addon_before_v070",
+        "401",
+        "502",
+        "missing_list",
+        "item_not_object",
+        "item_missing_status",
+    ],
+)
+async def test_channels_errors(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    mock_kwargs: dict[str, object],
+    expected: type[Exception],
+) -> None:
+    """A 404 (add-on v0.6.0 and older) and malformed bodies map to typed errors."""
+    aioclient_mock.get(CHANNELS_URL, **mock_kwargs)
+
+    with pytest.raises(expected) as exc_info:
+        await _client(hass).async_get_channels()
+    assert type(exc_info.value) is expected

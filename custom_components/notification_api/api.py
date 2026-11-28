@@ -1,8 +1,8 @@
 """Async client for the Notification API add-on (spec section 4).
 
-Covers `/ping`, `/recipients`, `/webhook` and `/notify`. `/notifications/{id}` will
-be added here as an `async_*` method; they all go through `_request`, which owns
-auth, timeouts and error mapping.
+Covers `/ping`, `/recipients`, `/webhook`, `/notify`, `/notifications/{id}` and
+`/channels`. Every `async_*` method goes through `_request`, which owns auth,
+timeouts and error mapping.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 
@@ -36,7 +37,9 @@ class NotificationApiNotFoundError(NotificationApiError):
     """The endpoint or resource does not exist (HTTP 404).
 
     For `/webhook` and `/recipients` this means the add-on predates them (v0.2.0).
-    For `/notify` it means the add-on predates sending (v0.3.0 and older).
+    For `/notify` it means the add-on predates sending (v0.3.0 and older), and for
+    `/channels` that it predates v0.7.0. For `/notifications/{id}` the id is unknown,
+    malformed or purged, or the add-on predates v0.7.0.
     """
 
 
@@ -145,6 +148,50 @@ class NotifyResult:
                 for d in self.deliveries
             ],
         }
+
+
+CHANNEL_CONFIGURED = "configured"
+
+
+@dataclass(frozen=True, slots=True)
+class Channel:
+    """One channel and whether it can send (spec 4.2)."""
+
+    name: str
+    # `configured` or `not_configured`.
+    status: str
+
+    @property
+    def configured(self) -> bool:
+        """Return whether the channel has its credentials saved in the add-on."""
+        return self.status == CHANNEL_CONFIGURED
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelsResult:
+    """Response of `GET /api/v1/channels`."""
+
+    channels: tuple[Channel, ...]
+
+    def get(self, name: str) -> Channel | None:
+        """Return the named channel, or None if the add-on didn't report it."""
+        return next((c for c in self.channels if c.name == name), None)
+
+
+# Keys `GET /notifications/{id}` always returns (spec 4.2).
+_NOTIFICATION_KEYS = ("notification_id", "priority", "tag", "source", "created_at")
+_NOTIFICATION_DELIVERY_KEYS = (
+    "delivery_id",
+    "contact",
+    "via",
+    "channel",
+    "status",
+    "attempts",
+    "last_error",
+    "next_attempt_at",
+    "last_attempt_at",
+    "completed_at",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +344,54 @@ class NotificationApiClient:
             )
         except (KeyError, TypeError) as err:
             raise NotificationApiError(f"Unexpected notify response: {body!r}") from err
+
+    async def async_get_notification(self, notification_id: str) -> dict[str, Any]:
+        """Return a notification and the current state of its deliveries (spec 4.2).
+
+        The body is returned as the add-on sent it (snake_case), after checking it
+        has every documented key. Raises `NotificationApiNotFoundError` (404) for an
+        unknown, malformed or purged id, and on add-ons older than v0.7.0.
+        """
+        # The id is user input: encode everything, `/` included, so it stays one
+        # path segment. `.` and `..` can't be encoded (yarl normalises them away,
+        # escaped or not, and the request would reach another endpoint), and can't
+        # be ids either, so they are answered like the add-on's malformed-id 404.
+        if notification_id in (".", ".."):
+            raise NotificationApiNotFoundError(
+                f"Invalid notification id {notification_id!r}"
+            )
+        path = f"/notifications/{quote(notification_id, safe='')}"
+        body = (await self._request("GET", path)).body
+        deliveries = body.get("deliveries")
+        if (
+            any(key not in body for key in _NOTIFICATION_KEYS)
+            or not isinstance(deliveries, list)
+            or not all(
+                isinstance(item, dict)
+                and all(key in item for key in _NOTIFICATION_DELIVERY_KEYS)
+                for item in deliveries
+            )
+        ):
+            raise NotificationApiError(f"Unexpected notification response: {body!r}")
+        return body
+
+    async def async_get_channels(self) -> ChannelsResult:
+        """Return whether each channel can send (spec 4.2).
+
+        Raises `NotificationApiNotFoundError` (404) on add-ons older than v0.7.0.
+        """
+        body = (await self._request("GET", "/channels")).body
+        try:
+            return ChannelsResult(
+                channels=tuple(
+                    Channel(name=str(item["name"]), status=str(item["status"]))
+                    for item in body["channels"]
+                )
+            )
+        except (KeyError, TypeError) as err:
+            raise NotificationApiError(
+                f"Unexpected channels response: {body!r}"
+            ) from err
 
     async def _request(
         self,

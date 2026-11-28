@@ -53,7 +53,7 @@ class NotificationApiVersionSensor(
     @property
     def native_value(self) -> str:
         """Return the add-on version."""
-        return self.coordinator.data.version
+        return self.coordinator.data.ping.version
 
 
 class NotificationApiRecipientsSensor(

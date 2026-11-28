@@ -61,6 +61,10 @@ PRIORITIES: Final = ("low", "normal", "high", "critical")
 DEFAULT_PRIORITY: Final = "normal"
 CHANNELS: Final = ("telegram", "sms")
 
+# The `notification_api.get_notification` action (spec 4.2, 11).
+SERVICE_GET_NOTIFICATION: Final = "get_notification"
+ATTR_NOTIFICATION_ID: Final = "notification_id"
+
 # `source` sent with a notification when the caller isn't an automation or script.
 SOURCE_SEND_ACTION: Final = f"{DOMAIN}.{SERVICE_SEND}"
 SOURCE_NOTIFY_ACTION: Final = "notify.send_message"

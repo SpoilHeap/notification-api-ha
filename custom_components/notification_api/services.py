@@ -1,7 +1,8 @@
-"""Sending: the `notification_api.send` action, and the send path shared with notify.
+"""The actions: `notification_api.send`, `notification_api.get_notification`.
 
-Both the action and the notify entities go through `async_send`, so they map the
+Both `send` and the notify entities go through `async_send`, so they map the
 add-on's errors (spec 4.1) to the same Home Assistant exceptions.
+`get_notification` maps them the same way, except for its own 404 (spec 4.2).
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from .const import (
     ATTR_CHANNELS,
     ATTR_IDEMPOTENCY_KEY,
     ATTR_MESSAGE,
+    ATTR_NOTIFICATION_ID,
     ATTR_PRIORITY,
     ATTR_TAG,
     ATTR_TITLE,
@@ -53,6 +55,7 @@ from .const import (
     DEFAULT_PRIORITY,
     DOMAIN,
     PRIORITIES,
+    SERVICE_GET_NOTIFICATION,
     SERVICE_SEND,
     SOURCE_SEND_ACTION,
 )
@@ -82,16 +85,31 @@ SEND_SCHEMA = probatio.Schema(
     }
 )
 
+GET_NOTIFICATION_SCHEMA = probatio.Schema(
+    {
+        probatio.Required(ATTR_NOTIFICATION_ID): probatio.All(
+            cv.string, probatio.Length(min=1)
+        ),
+    }
+)
+
 
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
-    """Register the `notification_api.send` action (once, from `async_setup`)."""
+    """Register the actions (once, from `async_setup`)."""
     hass.services.async_register(
         DOMAIN,
         SERVICE_SEND,
         _async_handle_send,
         schema=SEND_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_NOTIFICATION,
+        _async_handle_get_notification,
+        schema=GET_NOTIFICATION_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
     )
     # Home Assistant only builds an event (and so sets `Context.origin_event`) when
     # something listens to it. The recorder and logbook usually do; these no-op
@@ -122,6 +140,46 @@ async def _async_handle_send(call: ServiceCall) -> ServiceResponse:
         source=source_from_context(call.context, SOURCE_SEND_ACTION),
     )
     return result.as_dict() if call.return_response else None
+
+
+async def _async_handle_get_notification(call: ServiceCall) -> ServiceResponse:
+    """Handle `notification_api.get_notification`: the add-on's body, as-is."""
+    entry = _async_get_loaded_entry(call.hass)
+    notification_id: str = call.data[ATTR_NOTIFICATION_ID]
+    try:
+        return await entry.runtime_data.client.async_get_notification(notification_id)
+    except NotificationApiNotFoundError as err:
+        data = entry.runtime_data.coordinator.data
+        if data is not None and not data.channels_supported:
+            # `/channels` answered 404 on the last poll too: the add-on predates
+            # v0.7.0, which added both endpoints.
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="get_notification_unsupported",
+            ) from err
+        # Unknown, malformed, or removed by the retention purge (AC73).
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="notification_not_found",
+            translation_placeholders={"notification_id": notification_id},
+        ) from err
+    except NotificationApiAuthError as err:
+        entry.async_start_reauth(call.hass)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="auth_failed"
+        ) from err
+    except NotificationApiConnectionError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="addon_unreachable",
+            translation_placeholders={"error": str(err)},
+        ) from err
+    except NotificationApiError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="get_notification_failed",
+            translation_placeholders={"error": str(err)},
+        ) from err
 
 
 @callback
